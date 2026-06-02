@@ -65,7 +65,9 @@
   var selectedRow = null;
   var roots = [DATA.tree];        // current forest (model nodes)
   var currentView = "tree";       // "tree" | "routes" — which forest is shown
-  var AUTO_COLLAPSE_DEPTH = 2;
+  // How deep to auto-expand on (re)render: tree view opens index.html only
+  // (its root children visible but collapsed); routes view stays fully collapsed.
+  var autoExpandDepth = 1;
 
   function badges(node, m) {
     var frag = document.createDocumentFragment();
@@ -127,7 +129,7 @@
       var kids = el("div", "children collapsed");
       wrap._kids = kids;
       wrap.appendChild(kids);
-      var expanded = depth < AUTO_COLLAPSE_DEPTH;
+      var expanded = depth < autoExpandDepth;
       if (expanded) { kids.classList.remove("collapsed"); built.toggle.textContent = "▼"; populate(wrap); }
       built.toggle.addEventListener("click", function (ev) {
         ev.stopPropagation();
@@ -317,8 +319,17 @@
       rect.setAttribute("width", Math.max(0, r.w - 1)); rect.setAttribute("height", Math.max(0, r.h - 1));
       rect.setAttribute("fill", groupColor(r.path));
       rect.addEventListener("mousemove", function (ev) {
-        tip.style.display = "block"; tip.style.left = (ev.clientX + 12) + "px"; tip.style.top = (ev.clientY + 12) + "px";
+        tip.style.display = "block";
         tip.textContent = r.path.replace(/^[^/]*\//, "") + "  —  " + fmtBytes(r.value);
+        // Default to lower-right of the cursor; flip to the other side when the
+        // tip would overflow, so it stays on-screen (right edge tucked under
+        // the cursor near the right border).
+        var tw = tip.offsetWidth, th = tip.offsetHeight;
+        var x = ev.clientX + 12, y = ev.clientY + 12;
+        if (x + tw > window.innerWidth - 4) x = ev.clientX - tw - 12;
+        if (y + th > window.innerHeight - 4) y = ev.clientY - th - 12;
+        tip.style.left = Math.max(4, x) + "px";
+        tip.style.top = Math.max(4, y) + "px";
       });
       rect.addEventListener("mouseleave", function () { tip.style.display = "none"; });
       svg.appendChild(rect);
@@ -407,6 +418,7 @@
   var tabRoutes = document.getElementById("tab-routes");
   function activate(which) {
     currentView = which;
+    autoExpandDepth = which === "tree" ? 1 : 0; // tree: open index.html; routes: all collapsed
     tabTree.classList.toggle("active", which === "tree");
     tabRoutes.classList.toggle("active", which === "routes");
     roots = which === "tree" ? [DATA.tree] : DATA.routes;
@@ -418,10 +430,36 @@
   document.getElementById("collapse-all").addEventListener("click", collapseAll);
   var searchTimer;
   search.addEventListener("input", function () { clearTimeout(searchTimer); searchTimer = setTimeout(function () { applySearch(search.value); }, 140); });
-  window.addEventListener("resize", function () {
+  function redrawDetail() {
     if (detail._eager) selectEagerBundle();
     else if (detail._file) selectChunk(detail._file);
-  });
+  }
+  window.addEventListener("resize", redrawDetail);
+
+  // Draggable divider: let the user repartition the tree vs. detail panes.
+  (function () {
+    var mainEl = document.querySelector("main");
+    var resizer = document.getElementById("resizer");
+    var dragging = false, raf = 0;
+    resizer.addEventListener("mousedown", function (ev) {
+      dragging = true; resizer.classList.add("active");
+      document.body.style.cursor = "col-resize"; document.body.style.userSelect = "none";
+      ev.preventDefault();
+    });
+    window.addEventListener("mousemove", function (ev) {
+      if (!dragging) return;
+      var rect = mainEl.getBoundingClientRect();
+      var w = Math.max(280, Math.min(rect.width - 320 - 6, ev.clientX - rect.left));
+      mainEl.style.gridTemplateColumns = w + "px 6px 1fr";
+      if (!raf) raf = requestAnimationFrame(function () { raf = 0; redrawDetail(); });
+    });
+    window.addEventListener("mouseup", function () {
+      if (!dragging) return;
+      dragging = false; resizer.classList.remove("active");
+      document.body.style.cursor = ""; document.body.style.userSelect = "";
+      redrawDetail();
+    });
+  })();
 
   activate("tree");
   selectEagerBundle(); // land on the eager-bundle breakdown instead of an empty pane

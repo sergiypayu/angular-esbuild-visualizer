@@ -70,6 +70,7 @@ export async function renderHtml(data: VisualizerData): Promise<string> {
 </div>
 <main>
   <div class="pane tree" id="tree"></div>
+  <div class="resizer" id="resizer" title="Drag to resize"></div>
   <div class="pane detail" id="detail"><div class="empty">Select a chunk to inspect its original-module contents.</div></div>
 </main>
 <div class="tip" id="tip"></div>

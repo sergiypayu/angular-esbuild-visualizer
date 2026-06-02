@@ -65,10 +65,15 @@ header .gen { color: var(--fg-dim); font-size: 12px; }
 }
 .toolbar .spacer { margin-left: auto; }
 
-main { display: grid; grid-template-columns: minmax(420px, 1fr) minmax(380px, 0.9fr); height: calc(100vh - 112px); }
+main { display: grid; grid-template-columns: minmax(280px, 1fr) 6px minmax(320px, 0.9fr); height: calc(100vh - 112px); }
 .pane { overflow: auto; }
-.pane.tree { border-right: 1px solid var(--border); padding: 8px 4px 40px; }
+.pane.tree { padding: 8px 4px 40px; }
 .pane.detail { padding: 14px 16px 40px; }
+.resizer {
+  cursor: col-resize; background: var(--border);
+  transition: background .12s; user-select: none;
+}
+.resizer:hover, .resizer.active { background: var(--accent); }
 
 /* tree rows */
 .node { }
