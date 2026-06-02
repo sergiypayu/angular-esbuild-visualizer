@@ -1,0 +1,50 @@
+{
+  "name": "angular-esbuild-visualizer",
+  "version": "0.1.0",
+  "description": "Visualize the import branch of an Angular (esbuild builder) production bundle, starting from index.html. Builds an interactive HTML tree of chunk-to-chunk imports (eager + dynamic routes) and per-chunk original-module contents, using the build's stats.json (esbuild metafile).",
+  "type": "module",
+  "keywords": [
+    "angular",
+    "esbuild",
+    "metafile",
+    "bundle",
+    "bundle-analyzer",
+    "visualizer",
+    "treemap",
+    "stats-json",
+    "lazy-loading",
+    "code-splitting"
+  ],
+  "homepage": "https://github.com/sergiypayu/angular-esbuild-visualizer#readme",
+  "bugs": {
+    "url": "https://github.com/sergiypayu/angular-esbuild-visualizer/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sergiypayu/angular-esbuild-visualizer.git"
+  },
+  "author": "Sergiy Payu",
+  "license": "MIT",
+  "bin": {
+    "angular-esbuild-visualizer": "./src/cli.ts"
+  },
+  "scripts": {
+    "start": "node --experimental-strip-types src/cli.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "npm run typecheck"
+  },
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.4.0"
+  },
+  "files": [
+    "src",
+    "dist",
+    "README.md",
+    "LICENSE"
+  ]
+}
