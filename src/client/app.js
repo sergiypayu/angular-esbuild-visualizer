@@ -47,7 +47,11 @@
     return d;
   }
   statRow.appendChild(stat("JS chunks", String(s.jsChunkCount)));
-  statRow.appendChild(stat("eager initial", fmtBytes(s.eagerJsBytes) + " · " + s.eagerChunkCount));
+  var eagerStat = stat("eager initial", fmtBytes(s.eagerJsBytes) + " · " + s.eagerChunkCount);
+  eagerStat.className = "stat clickable";
+  eagerStat.title = "Show what fills the eager initial bundle";
+  eagerStat.addEventListener("click", function () { selectEagerBundle(); });
+  statRow.appendChild(eagerStat);
   statRow.appendChild(stat("lazy", fmtBytes(s.lazyJsBytes) + " · " + s.lazyChunkCount));
   statRow.appendChild(stat("total JS", fmtBytes(s.totalJsBytes)));
   statRow.appendChild(stat("dynamic imports", String(s.dynamicEdgeCount)));
@@ -332,24 +336,70 @@
     if (node.value != null) { out.push({ path: (prefix ? prefix + "/" : "") + node.name, bytes: node.value }); return; }
     (node.children || []).forEach(function (c) { flatLeaves(c, (prefix ? prefix + "/" : "") + node.name, out); });
   }
-  function selectChunk(file) {
+  // Render a title + sub-line + treemap + sorted module table into the detail
+  // pane. Shared by the per-chunk view and the aggregate eager-bundle view.
+  function renderTreemapDetail(titleText, subText, contents) {
     detail.innerHTML = "";
-    if (file === "index.html") { detail.appendChild(el("div", "empty", "index.html — synthetic root. Pick a chunk to see its contents.")); return; }
-    var m = meta(file);
-    detail.appendChild(el("h2", null, m.file));
-    var sub = el("div", "sub");
-    sub.textContent = fmtBytes(m.bytes) + " · " + m.moduleCount + " module" + (m.moduleCount === 1 ? "" : "s")
-      + (m.entryPoint ? " · entry: " + m.entryPoint : "") + (m.inEager ? " · eager" : " · lazy");
-    detail.appendChild(sub);
-    var tm = el("div", null); detail.appendChild(tm); drawTreemap(tm, m.contents);
-    var leaves = []; flatLeaves(m.contents, "", leaves); leaves.sort(function (a, b) { return b.bytes - a.bytes; });
+    detail.appendChild(el("h2", null, titleText));
+    detail.appendChild(el("div", "sub", subText));
+    var tm = el("div", null); detail.appendChild(tm); drawTreemap(tm, contents);
+    var leaves = []; flatLeaves(contents, "", leaves); leaves.sort(function (a, b) { return b.bytes - a.bytes; });
     var table = el("table", "mods");
     var head = el("tr"); head.appendChild(el("th", null, "module (" + leaves.length + ")")); head.appendChild(el("th", "n", "bytes")); table.appendChild(head);
     leaves.slice(0, 300).forEach(function (l) {
       var tr = el("tr"); tr.appendChild(el("td", null, l.path.replace(/^[^/]*\//, ""))); tr.appendChild(el("td", "n", fmtBytes(l.bytes))); table.appendChild(tr);
     });
     detail.appendChild(table);
+  }
+  function selectChunk(file) {
+    detail._eager = false;
+    if (file === "index.html") {
+      detail.innerHTML = ""; detail._file = null;
+      detail.appendChild(el("div", "empty", "index.html — synthetic root. Pick a chunk, or click “eager initial” for the bundle breakdown."));
+      return;
+    }
+    var m = meta(file);
+    var sub = fmtBytes(m.bytes) + " · " + m.moduleCount + " module" + (m.moduleCount === 1 ? "" : "s")
+      + (m.entryPoint ? " · entry: " + m.entryPoint : "") + (m.inEager ? " · eager" : " · lazy");
+    renderTreemapDetail(m.file, sub, m.contents);
     detail._file = file;
+  }
+
+  // Merge every eager chunk's original-module hierarchy into one tree so the
+  // treemap shows the whole initial bundle's content (by package/path), not
+  // just one chunk. Directory nodes merge by name; module leaves are unique
+  // per output, so their sizes simply accumulate.
+  function mergeInto(target, children) {
+    (children || []).forEach(function (child) {
+      target.children = target.children || [];
+      if (child.children) {
+        var dir = null;
+        for (var i = 0; i < target.children.length; i++) {
+          if (target.children[i].name === child.name && target.children[i].children) { dir = target.children[i]; break; }
+        }
+        if (!dir) { dir = { name: child.name, children: [] }; target.children.push(dir); }
+        mergeInto(dir, child.children);
+      } else {
+        target.children.push({ name: child.name, value: child.value });
+      }
+    });
+  }
+  function eagerContents() {
+    var root = { name: "eager bundle", children: [] };
+    Object.keys(chunks).forEach(function (file) {
+      if (chunks[file].inEager) mergeInto(root, chunks[file].contents.children);
+    });
+    return root;
+  }
+  function selectEagerBundle() {
+    detail._eager = true; detail._file = null;
+    if (selectedRow) { selectedRow.classList.remove("selected"); selectedRow = null; }
+    var contents = eagerContents();
+    var leaves = []; flatLeaves(contents, "", leaves);
+    var attributed = leaves.reduce(function (a, l) { return a + l.bytes; }, 0);
+    var sub = fmtBytes(s.eagerJsBytes) + " across " + s.eagerChunkCount + " chunks · "
+      + leaves.length + " modules · " + fmtBytes(attributed) + " attributed to source";
+    renderTreemapDetail("Eager initial bundle", sub, contents);
   }
 
   // ---- tabs / toolbar ---------------------------------------------------
@@ -368,7 +418,11 @@
   document.getElementById("collapse-all").addEventListener("click", collapseAll);
   var searchTimer;
   search.addEventListener("input", function () { clearTimeout(searchTimer); searchTimer = setTimeout(function () { applySearch(search.value); }, 140); });
-  window.addEventListener("resize", function () { if (detail._file) selectChunk(detail._file); });
+  window.addEventListener("resize", function () {
+    if (detail._eager) selectEagerBundle();
+    else if (detail._file) selectChunk(detail._file);
+  });
 
   activate("tree");
+  selectEagerBundle(); // land on the eager-bundle breakdown instead of an empty pane
 })();
