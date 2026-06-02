@@ -358,12 +358,17 @@
     var table = el("table", "mods");
     var head = el("tr"); head.appendChild(el("th", null, "module (" + leaves.length + ")")); head.appendChild(el("th", "n", "bytes")); table.appendChild(head);
     leaves.slice(0, 300).forEach(function (l) {
-      var tr = el("tr"); tr.appendChild(el("td", null, l.path.replace(/^[^/]*\//, ""))); tr.appendChild(el("td", "n", fmtBytes(l.bytes))); table.appendChild(tr);
+      var modPath = l.path.replace(/^[^/]*\//, "");
+      var tr = el("tr", "mrow"); tr.title = "Why is this loaded?";
+      tr.appendChild(el("td", null, modPath));
+      tr.appendChild(el("td", "n", fmtBytes(l.bytes)));
+      tr.addEventListener("click", function () { selectModule(modPath); });
+      table.appendChild(tr);
     });
     detail.appendChild(table);
   }
   function selectChunk(file) {
-    detail._eager = false;
+    detail._eager = false; detail._module = null;
     if (file === "index.html") {
       detail.innerHTML = ""; detail._file = null;
       detail.appendChild(el("div", "empty", "index.html — synthetic root. Pick a chunk, or click “eager initial” for the bundle breakdown."));
@@ -403,7 +408,7 @@
     return root;
   }
   function selectEagerBundle() {
-    detail._eager = true; detail._file = null;
+    detail._eager = true; detail._file = null; detail._module = null;
     if (selectedRow) { selectedRow.classList.remove("selected"); selectedRow = null; }
     var contents = eagerContents();
     var leaves = []; flatLeaves(contents, "", leaves);
@@ -411,6 +416,111 @@
     var sub = fmtBytes(s.eagerJsBytes) + " across " + s.eagerChunkCount + " chunks · "
       + leaves.length + " modules · " + fmtBytes(attributed) + " attributed to source";
     renderTreemapDetail("Eager initial bundle", sub, contents);
+  }
+
+  // ---- "why is this module loaded?" — reverse import-chain analysis ------
+  var MG = DATA.moduleGraph || { paths: [], importers: [], htmlEntries: [], routeEntries: [] };
+  var KINDNAME = ["import", "require", "dynamic"];
+  var pathIdx = null;     // module path -> index
+  var moduleLoc = null;   // module path -> { chunks:[file], bytes }
+  var htmlStop = null, routeStop = null, allStop = null;
+  function ensureModuleIndex() {
+    if (pathIdx) return;
+    pathIdx = {};
+    for (var i = 0; i < MG.paths.length; i++) pathIdx[MG.paths[i]] = i;
+    htmlStop = {}; MG.htmlEntries.forEach(function (n) { htmlStop[n] = true; });
+    routeStop = {}; MG.routeEntries.forEach(function (n) { routeStop[n] = true; });
+    allStop = {}; MG.htmlEntries.concat(MG.routeEntries).forEach(function (n) { allStop[n] = true; });
+    moduleLoc = {};
+    Object.keys(chunks).forEach(function (file) {
+      var leaves = []; flatLeaves(chunks[file].contents, "", leaves);
+      leaves.forEach(function (l) {
+        var p = l.path.replace(/^[^/]*\//, "");
+        var e = moduleLoc[p] || (moduleLoc[p] = { chunks: [], bytes: 0 });
+        e.chunks.push(file); e.bytes += l.bytes;
+      });
+    });
+  }
+  function importersOf(idx) {
+    return (MG.importers[idx] || []).map(function (n) { return { idx: n >> 2, kind: n & 3 }; });
+  }
+  // Shortest reverse path (over import/require edges, optionally crossing
+  // dynamic-import) from `start` up to any module in `stop`.
+  function bfsTo(start, stop, allowDynamic) {
+    var seen = {}; seen[start] = true;
+    var queue = [[{ idx: start, kind: -1 }]];
+    while (queue.length) {
+      var path = queue.shift();
+      var head = path[path.length - 1].idx;
+      if (stop[head]) return path;
+      var imps = importersOf(head);
+      for (var i = 0; i < imps.length; i++) {
+        var im = imps[i];
+        if (im.kind === 2 && !allowDynamic) continue;
+        if (seen[im.idx]) continue;
+        seen[im.idx] = true;
+        queue.push(path.concat([{ idx: im.idx, kind: im.kind }]));
+      }
+    }
+    return null;
+  }
+  function analyzeModule(idx) {
+    var c = bfsTo(idx, htmlStop, false); if (c) return { status: "eager", chain: c };
+    c = bfsTo(idx, allStop, false);      if (c) return { status: "grouped", chain: c };
+    c = bfsTo(idx, allStop, true);       if (c) return { status: "lazy", chain: c };
+    return { status: "orphan", chain: [{ idx: idx, kind: -1 }] };
+  }
+  var STATUS_TEXT = {
+    eager: "Eager — statically imported from an index.html entry. Break a static import in this chain to drop it from the initial bundle.",
+    grouped: "In an eager chunk by grouping — not statically reachable from an index.html entry; its real consumer is a lazy route, so esbuild only co-located it with eager code.",
+    lazy: "Lazy — only reached by crossing a dynamic import().",
+    orphan: "No import path to an entry was found.",
+  };
+  function shortName(p) { return p.replace(/^node_modules\//, ""); }
+  function selectModule(path) {
+    ensureModuleIndex();
+    detail._eager = false; detail._file = null; detail._module = path;
+    detail.innerHTML = "";
+    detail.appendChild(el("h2", null, path.split("/").pop()));
+    detail.appendChild(el("div", "sub mpath", path));
+    var loc = moduleLoc[path] || { chunks: [], bytes: 0 };
+    var inEager = loc.chunks.some(function (f) { return chunks[f] && chunks[f].inEager; });
+    detail.appendChild(el("div", "sub", fmtBytes(loc.bytes) + " in bundle · "
+      + (loc.chunks.length ? "in " + loc.chunks.join(", ") : "—") + " · " + (inEager ? "eager" : "lazy")));
+
+    var idx = pathIdx[path];
+    if (idx == null) { detail.appendChild(el("div", "muted", "Not present in the module graph.")); return; }
+    var res = analyzeModule(idx);
+    detail.appendChild(el("div", "why-status " + res.status, STATUS_TEXT[res.status]));
+
+    detail.appendChild(el("div", "reasons-h", "Reverse import chain (nearest entry)"));
+    var box = el("div", "mchain");
+    res.chain.forEach(function (step, i) {
+      var row = el("div", "mstep");
+      if (i > 0) row.appendChild(el("span", "mkind" + (step.kind === 2 ? " dyn" : ""), "⟵ " + (KINDNAME[step.kind] || "")));
+      var p = MG.paths[step.idx];
+      var crumb = el("span", "mcrumb" + (i === 0 ? " current" : ""), shortName(p));
+      if (i !== 0) crumb.addEventListener("click", function () { selectModule(p); });
+      row.appendChild(crumb);
+      if (i === res.chain.length - 1 && res.status !== "orphan") {
+        var isHtml = htmlStop[step.idx];
+        row.appendChild(el("span", "mtag " + (isHtml ? "entry" : "route"), isHtml ? "index.html entry" : "lazy route entry"));
+      }
+      box.appendChild(row);
+    });
+    detail.appendChild(box);
+
+    var imps = importersOf(idx);
+    detail.appendChild(el("div", "reasons-h", "Imported by " + imps.length + " module" + (imps.length === 1 ? "" : "s")));
+    var chips = el("div", "chips");
+    imps.slice(0, 60).forEach(function (im) {
+      var p = MG.paths[im.idx];
+      var c = el("span", "chip " + (im.kind === 2 ? "d" : "s"), KINDNAME[im.kind] + ": " + shortName(p));
+      c.addEventListener("click", function () { selectModule(p); });
+      chips.appendChild(c);
+    });
+    if (!imps.length) chips.appendChild(el("span", "muted", "none — this is an entry module"));
+    detail.appendChild(chips);
   }
 
   // ---- tabs / toolbar ---------------------------------------------------
@@ -432,6 +542,7 @@
   search.addEventListener("input", function () { clearTimeout(searchTimer); searchTimer = setTimeout(function () { applySearch(search.value); }, 140); });
   function redrawDetail() {
     if (detail._eager) selectEagerBundle();
+    else if (detail._module) selectModule(detail._module);
     else if (detail._file) selectChunk(detail._file);
   }
   window.addEventListener("resize", redrawDetail);

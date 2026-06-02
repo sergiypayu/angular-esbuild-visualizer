@@ -6,12 +6,57 @@ import type {
   ChunkMeta,
   EsbuildMetafile,
   EsbuildOutput,
+  ModuleGraph,
   Summary,
   TreemapNode,
   TreeKind,
   TreeNode,
   VisualizerData,
 } from "./types.ts";
+
+/** esbuild import-edge kinds we keep in the module graph, packed into 2 bits. */
+const MODULE_EDGE_KIND: Record<string, number> = {
+  "import-statement": 0,
+  "require-call": 1,
+  "dynamic-import": 2,
+};
+
+/**
+ * Build the interned, reversed original-module import graph + the entry-module
+ * indices (split into index.html entries vs lazy-route entries). Drives the
+ * client's reverse-import-chain ("why is this loaded?") analysis.
+ */
+function buildModuleGraph(
+  meta: EsbuildMetafile,
+  jsOutputs: Map<string, EsbuildOutput>,
+  htmlEntryChunks: Set<string>,
+): ModuleGraph {
+  const paths = Object.keys(meta.inputs);
+  const idxOf = new Map<string, number>(paths.map((p, i) => [p, i]));
+  const importers: number[][] = paths.map(() => []);
+
+  for (const [importerPath, input] of Object.entries(meta.inputs)) {
+    const fromIdx = idxOf.get(importerPath)!;
+    for (const imp of input.imports ?? []) {
+      const kind = MODULE_EDGE_KIND[imp.kind];
+      if (kind === undefined) continue;
+      const toIdx = idxOf.get(imp.path);
+      if (toIdx === undefined) continue; // external / unresolved
+      importers[toIdx]!.push(fromIdx * 4 + kind);
+    }
+  }
+
+  const htmlEntries: number[] = [];
+  const routeEntries: number[] = [];
+  for (const [file, out] of jsOutputs) {
+    if (!out.entryPoint) continue;
+    const idx = idxOf.get(out.entryPoint);
+    if (idx === undefined) continue;
+    (htmlEntryChunks.has(file) ? htmlEntries : routeEntries).push(idx);
+  }
+
+  return { paths, importers, htmlEntries, routeEntries };
+}
 
 export interface BuildOptions {
   title: string;
@@ -360,6 +405,8 @@ export async function buildModel(
     staticEdgeCount,
   };
 
+  const moduleGraph = buildModuleGraph(meta, jsOutputs, entrySet);
+
   return {
     title: opts.title,
     generatedAt: new Date().toISOString(),
@@ -367,5 +414,6 @@ export async function buildModel(
     chunks,
     tree,
     routes,
+    moduleGraph,
   };
 }

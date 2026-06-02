@@ -95,6 +95,25 @@ export interface Summary {
   staticEdgeCount: number;
 }
 
+/**
+ * Module-level (original-source) reverse import graph, used by the client's
+ * "why is this loaded?" analysis. Paths are interned to indices to keep the
+ * inlined payload small; edges are stored reversed (importer of each module).
+ */
+export interface ModuleGraph {
+  /** idx → module path (esbuild `inputs` key). */
+  paths: string[];
+  /**
+   * idx → packed reverse edges. Each entry is `importerIdx * 4 + kind`, where
+   * kind is 0 = import-statement, 1 = require-call, 2 = dynamic-import.
+   */
+  importers: number[][];
+  /** Module indices that are the entryPoint of an index.html entry chunk. */
+  htmlEntries: number[];
+  /** Module indices that are the entryPoint of a lazy (route) chunk. */
+  routeEntries: number[];
+}
+
 export interface VisualizerData {
   title: string;
   generatedAt: string;
@@ -104,4 +123,6 @@ export interface VisualizerData {
   tree: TreeNode;
   /** Forest of dynamically-imported route bundles. */
   routes: TreeNode[];
+  /** Original-module reverse import graph for chain ("why loaded") analysis. */
+  moduleGraph: ModuleGraph;
 }
