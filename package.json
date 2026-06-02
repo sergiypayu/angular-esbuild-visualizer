@@ -38,6 +38,7 @@
     "node": ">=22.6.0"
   },
   "devDependencies": {
+    "@playwright/mcp": "^0.0.75",
     "@types/node": "^22.0.0",
     "typescript": "^5.4.0"
   },

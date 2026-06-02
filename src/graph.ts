@@ -8,6 +8,7 @@ import type {
   EsbuildOutput,
   Summary,
   TreemapNode,
+  TreeKind,
   TreeNode,
   VisualizerData,
 } from "./types.ts";
@@ -83,9 +84,17 @@ function makeChunkMeta(
   };
 }
 
-/** BFS from the entry chunks over static edges, producing a tree + the eager set. */
+/**
+ * BFS from the index.html roots over static edges, producing a tree + the eager
+ * set. Both the `<script>` entries and the `modulepreload` hints are seeded as
+ * top-level roots: esbuild lists exactly the chunks the entries statically
+ * import, so the browser fetches them up front, and they belong beside the
+ * scripts rather than buried under whichever entry happens to import them. A
+ * preload that an entry also imports then renders as a back-reference there.
+ */
 function buildEagerTree(
   entries: string[],
+  preloads: string[],
   jsOutputs: Map<string, EsbuildOutput>,
 ): { tree: TreeNode; eager: Set<string> } {
   const owner = new Set<string>(); // chunks already placed in the tree
@@ -94,14 +103,17 @@ function buildEagerTree(
 
   const root: TreeNode = { file: "index.html", kind: "html", children: [] };
 
-  for (const entry of entries) {
-    if (!jsOutputs.has(entry) || owner.has(entry)) continue;
-    const node: TreeNode = { file: entry, kind: "entry", edge: "html", children: [] };
+  const seed = (file: string, kind: TreeKind): void => {
+    if (!jsOutputs.has(file) || owner.has(file)) return;
+    const node: TreeNode = { file, kind, edge: "html", children: [] };
     root.children.push(node);
-    nodeOf.set(entry, node);
-    owner.add(entry);
-    queue.push(entry);
-  }
+    nodeOf.set(file, node);
+    owner.add(file);
+    queue.push(file);
+  };
+
+  for (const entry of entries) seed(entry, "entry");
+  for (const preload of preloads) seed(preload, "eager");
 
   while (queue.length) {
     const file = queue.shift()!;
@@ -304,7 +316,8 @@ export async function buildModel(
   }
 
   const entries = html.scripts.filter((f) => jsOutputs.has(f));
-  const { tree, eager } = buildEagerTree(entries, jsOutputs);
+  const preloads = html.modulePreloads.filter((f) => jsOutputs.has(f));
+  const { tree, eager } = buildEagerTree(entries, preloads, jsOutputs);
   for (const file of eager) {
     const c = chunks[file];
     if (c) c.inEager = true;
