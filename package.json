@@ -46,5 +46,8 @@
     "dist",
     "README.md",
     "LICENSE"
-  ]
+  ],
+  "dependencies": {
+    "open": "^11.0.0"
+  }
 }

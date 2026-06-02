@@ -43,8 +43,10 @@ package cannot run `.ts` directly — hence the compiled `dist/`.
 
 ## Architecture
 
-Pure ESM, no framework, no third-party runtime deps. The pipeline (driven by
-`src/cli.ts → main()`):
+Pure ESM, no framework. The analysis pipeline has no third-party runtime deps;
+the only runtime dependency is `open`, used solely by the `--open` flag (opens
+the result via the OS default handler, like esbuild-visualizer). The pipeline
+(driven by `src/cli.ts → main()`):
 
 1. **`src/metafile.ts`** — `loadMetafile()` reads + validates `stats.json`;
    `isJs`, `staticImports` (`import-statement` edges), `dynamicImports`

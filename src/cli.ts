@@ -70,14 +70,6 @@ function parseArgs(argv: string[]): Args {
   return args;
 }
 
-async function openInBrowser(file: string): Promise<void> {
-  const { spawn } = await import("node:child_process");
-  const cmd = process.platform === "darwin" ? "open"
-    : process.platform === "win32" ? "cmd" : "xdg-open";
-  const cmdArgs = process.platform === "win32" ? ["/c", "start", "", file] : [file];
-  spawn(cmd, cmdArgs, { detached: true, stdio: "ignore" }).unref();
-}
-
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const dir = resolve(args.dir);
@@ -101,7 +93,13 @@ async function main(): Promise<void> {
   await writeFile(outPath, out, "utf-8");
   process.stderr.write(`✓ wrote ${outPath}\n`);
 
-  if (args.open) await openInBrowser(outPath);
+  if (args.open) {
+    // Open with the `open` package (as esbuild-visualizer does): launches the
+    // OS default handler for the file. Note that's the `text/html` MIME default,
+    // which may differ from the default web browser if mis-associated.
+    const { default: open } = await import("open");
+    await open(outPath);
+  }
 }
 
 main().catch((err: unknown) => {
