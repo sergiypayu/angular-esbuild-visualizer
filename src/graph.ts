@@ -214,11 +214,22 @@ async function buildRouteForest(
     if (targets.length) dynamic.set(file, targets);
   }
 
+  // Chunks dynamically imported straight from the eager app — i.e. top-level
+  // routes. Such a chunk's canonical expansion belongs at its own route root,
+  // so when one is reached *nested* under another route (e.g. an incidental
+  // cross-route `import()`), we emit a ref and let the root pass expand it.
+  const rootTargets = new Set<string>();
+  for (const [importer, targets] of dynamic) {
+    if (!eager.has(importer)) continue;
+    for (const target of targets) rootTargets.add(target);
+  }
+
   const expanded = new Set<string>(); // lazy chunks whose subtree was already emitted
 
   const buildLazySubtree = async (
     file: string,
     importer: string,
+    isRoot: boolean,
   ): Promise<TreeNode> => {
     const routePath = await routePathFor(importer, file, sources);
     const node: TreeNode = {
@@ -228,7 +239,7 @@ async function buildRouteForest(
       children: [],
       ...(routePath !== undefined ? { routePath } : {}),
     };
-    if (expanded.has(file)) {
+    if (expanded.has(file) || (!isRoot && rootTargets.has(file))) {
       node.ref = true;
       node.refReason = "seen";
       return node;
@@ -279,7 +290,7 @@ async function buildRouteForest(
     // Nested dynamic routes from this bundle and everything statically pulled with it.
     for (const owned of localOwner) {
       for (const target of dynamic.get(owned) ?? []) {
-        node.children.push(await buildLazySubtree(target, owned));
+        node.children.push(await buildLazySubtree(target, owned, false));
       }
     }
     return node;
@@ -290,7 +301,7 @@ async function buildRouteForest(
   for (const [importer, targets] of dynamic) {
     if (!eager.has(importer)) continue;
     for (const target of targets) {
-      roots.push(await buildLazySubtree(target, importer));
+      roots.push(await buildLazySubtree(target, importer, true));
     }
   }
   roots.sort((a, b) => (a.routePath ?? "~").localeCompare(b.routePath ?? "~"));
