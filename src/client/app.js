@@ -65,6 +65,7 @@
   var selectedRow = null;
   var roots = [DATA.tree];        // current forest (model nodes)
   var currentView = "tree";       // "tree" | "routes" — which forest is shown
+  var RESTORING = false;          // true while applying history state (suppress pushes)
   // How deep to auto-expand on (re)render: tree view opens index.html only
   // (its root children visible but collapsed); routes view stays fully collapsed.
   var autoExpandDepth = 1;
@@ -196,6 +197,8 @@
     var view = "tree", path = findPath([DATA.tree], file);
     if (!path) { path = findPath(DATA.routes, file); view = "routes"; }
     if (!path) return;
+    // Apply the tab switch + selection as one navigation (single history entry).
+    var wasRestoring = RESTORING; RESTORING = true;
     // The DOM walk below needs the right forest, unfiltered and freshly laid out.
     if (search.value) { search.value = ""; activate(view); }
     else if (view !== currentView) activate(view);
@@ -203,7 +206,7 @@
     var container = treePane, wrap = null;
     for (var i = 0; i < path.length; i++) {
       wrap = childWrapFor(container, path[i]);
-      if (!wrap) return; // tree changed under us; give up quietly
+      if (!wrap) { RESTORING = wasRestoring; return; } // tree changed under us; give up quietly
       if (i < path.length - 1) { openWrap(wrap); container = wrap._kids; }
     }
     var row = wrap.firstElementChild; // the node's own .row
@@ -212,6 +215,8 @@
     selectChunk(file);
     row.scrollIntoView({ block: "center" });
     row.classList.remove("flash"); void row.offsetWidth; row.classList.add("flash");
+    RESTORING = wasRestoring;
+    pushHistory();
   }
 
   // ---- search over the data model (finds not-yet-rendered nodes) --------
@@ -379,6 +384,7 @@
       + (m.entryPoint ? " · entry: " + m.entryPoint : "") + (m.inEager ? " · eager" : " · lazy");
     renderTreemapDetail(m.file, sub, m.contents);
     detail._file = file;
+    pushHistory();
   }
 
   // Merge every eager chunk's original-module hierarchy into one tree so the
@@ -416,6 +422,7 @@
     var sub = fmtBytes(s.eagerJsBytes) + " across " + s.eagerChunkCount + " chunks · "
       + leaves.length + " modules · " + fmtBytes(attributed) + " attributed to source";
     renderTreemapDetail("Eager initial bundle", sub, contents);
+    pushHistory();
   }
 
   // ---- "why is this module loaded?" — reverse import-chain analysis ------
@@ -521,6 +528,7 @@
     });
     if (!imps.length) chips.appendChild(el("span", "muted", "none — this is an entry module"));
     detail.appendChild(chips);
+    pushHistory();
   }
 
   // ---- tabs / toolbar ---------------------------------------------------
@@ -533,6 +541,7 @@
     tabRoutes.classList.toggle("active", which === "routes");
     roots = which === "tree" ? [DATA.tree] : DATA.routes;
     if (search.value) applySearch(search.value); else renderForest();
+    pushHistory();
   }
   tabTree.addEventListener("click", function () { activate("tree"); });
   tabRoutes.addEventListener("click", function () { activate("routes"); });
@@ -572,6 +581,66 @@
     });
   })();
 
-  activate("tree");
-  selectEagerBundle(); // land on the eager-bundle breakdown instead of an empty pane
+  // ---- history / back-button routing ------------------------------------
+  // State = which forest tab is shown + what the detail pane shows. Each user
+  // navigation (select chunk/module, open eager bundle, switch tab, jump to a
+  // ref) pushes one entry; Back/Forward restore it.
+  function currentState() {
+    var d;
+    if (detail._module) d = { type: "module", path: detail._module };
+    else if (detail._eager) d = { type: "eager" };
+    else if (detail._file) d = { type: "chunk", file: detail._file };
+    else d = { type: "none" };
+    return { tab: currentView, detail: d };
+  }
+  function hashFor(st) {
+    var frag = st.tab, d = st.detail || { type: "none" };
+    if (d.type === "chunk") frag += "/chunk/" + encodeURIComponent(d.file);
+    else if (d.type === "module") frag += "/module/" + encodeURIComponent(d.path);
+    else if (d.type === "eager") frag += "/eager";
+    return "#" + frag;
+  }
+  function parseHash(h) {
+    if (!h || h.length < 2) return null;
+    var parts = h.slice(1).split("/");
+    var tab = parts[0] === "routes" ? "routes" : "tree";
+    var d = { type: "eager" };
+    if (parts[1] === "chunk" && parts[2]) d = { type: "chunk", file: decodeURIComponent(parts[2]) };
+    else if (parts[1] === "module" && parts[2]) d = { type: "module", path: decodeURIComponent(parts[2]) };
+    return { tab: tab, detail: d };
+  }
+  var lastHash = null;
+  // pushState with a URL throws on file:// (origin "null"); fall back to a
+  // URL-less entry so Back/Forward still work even without a shareable hash.
+  function setHistory(st, replace) {
+    var h = hashFor(st);
+    try { history[replace ? "replaceState" : "pushState"](st, "", h); }
+    catch (e) { try { history[replace ? "replaceState" : "pushState"](st, ""); } catch (e2) { /* ignore */ } }
+    lastHash = h;
+  }
+  function pushHistory() {
+    if (RESTORING) return;
+    if (hashFor(currentState()) === lastHash) return; // don't stack no-op navigations
+    setHistory(currentState(), false);
+  }
+  function applyDetail(d) {
+    if (d && d.type === "chunk") selectChunk(d.file);
+    else if (d && d.type === "module") selectModule(d.path);
+    else selectEagerBundle();
+  }
+  function applyState(st, forceForest) {
+    RESTORING = true;
+    if (forceForest || st.tab !== currentView) activate(st.tab);
+    applyDetail(st.detail);
+    RESTORING = false;
+  }
+  window.addEventListener("popstate", function (ev) {
+    var st = ev.state || parseHash(location.hash) || { tab: "tree", detail: { type: "eager" } };
+    applyState(st);
+    lastHash = hashFor(st);
+  });
+
+  // Initial view: honor a deep-link hash, else default to the eager bundle.
+  applyState(parseHash(location.hash) || { tab: "tree", detail: { type: "eager" } }, true);
+  setHistory(currentState(), true);
 })();
