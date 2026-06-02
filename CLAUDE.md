@@ -20,19 +20,23 @@ node --experimental-strip-types src/cli.ts <dir> [options]
 npm start -- <dir> [options]          # same thing via the start script
 
 npm run typecheck                     # tsc --noEmit
-npm run build                         # emit dist/ via tsc
+npm run build                         # compile dist/ (tsc + scripts/postbuild.mjs)
 npm install                           # only needed for typecheck/build (typescript, @types/node)
 ```
 
-There is **no test suite** and **no build required to run**. `bin` and `npm
-start` execute the TypeScript sources directly through Node's type-stripping;
-`dist/` only exists for publishing.
+There is **no test suite** and **no build required for local dev**. `npm start`
+executes the TypeScript sources directly through Node's type-stripping. The
+**published** package, however, ships compiled JS: `bin` points at
+`dist/cli.js`, and `npm run build` (tsc + `scripts/postbuild.mjs`) emits `dist/`.
+Type-stripping is forbidden under a consumer's `node_modules`, so an installed
+package cannot run `.ts` directly — hence the compiled `dist/`.
 
 ## Requirements
 
-- **Node ≥ 22.6** — the CLI relies on `--experimental-strip-types` to run `.ts`
-  directly (the `bin`/shebang in `src/cli.ts` does this). Don't add a build
-  prerequisite for normal CLI use.
+- **Node ≥ 22.6** — local dev relies on `--experimental-strip-types` to run
+  `.ts` directly (the `bin`/shebang in `src/cli.ts` does this for `npm start`).
+  Don't add a build prerequisite for *local* CLI use; the build only matters for
+  publishing.
 - The input must come from the Angular **application/esbuild builder** with
   `statsJson` enabled (the `outputs`/`inputs` metafile shape). The webpack
   `stats.json` is a different format and is rejected by `loadMetafile`.
@@ -87,5 +91,9 @@ changing the model.
 
 ## Publishing
 
-`package.json` is configured for npm (`files` allowlist, `bin`,
-`prepublishOnly` runs typecheck). Repo: `github.com/sergiypayu/angular-esbuild-visualizer`.
+`package.json` ships **compiled `dist/`** (not the `.ts` sources): `files` is
+`["dist", "README.md", "LICENSE"]`, `bin` → `dist/cli.js`, and `prepublishOnly`
+runs `npm run build`. The build is `tsc` + `scripts/postbuild.mjs`, which copies
+`src/client/` → `dist/client/` (the inlined assets `render.js` reads at runtime)
+and normalizes `dist/cli.js`'s shebang to plain `node`. `dist/` is gitignored
+and rebuilt on publish. Repo: `github.com/sergiypayu/angular-esbuild-visualizer`.

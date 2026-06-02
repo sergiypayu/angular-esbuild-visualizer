@@ -35,8 +35,9 @@ understand Angular's two-tier loading model. The questions this tool answers:
 
 ## Requirements
 
-- **Node.js ≥ 22.6** — the CLI runs TypeScript directly via Node's
-  `--experimental-strip-types`; no build step needed to use it.
+- **Node.js ≥ 22.6** — installed from npm the CLI runs as compiled JavaScript
+  (no flags needed); run from a clone it executes the TypeScript sources
+  directly via Node's `--experimental-strip-types`.
 - A production build with the **esbuild application builder** and the
   **metafile** enabled.
 
@@ -192,11 +193,13 @@ dependency-free client (`src/client/`).
 
 ```bash
 npm run typecheck    # tsc --noEmit
-npm run build        # emit dist/ (tsc)
+npm run build        # compile dist/ (tsc + copy client assets, normalize shebang)
 ```
 
-The runtime needs no build — `bin` and `npm start` execute the TypeScript
-sources directly. `npm run build` exists for publishing a compiled `dist/`.
+For local development no build is needed — `npm start` executes the TypeScript
+sources directly via type-stripping. `npm run build` compiles `dist/`, which is
+what gets published to npm (the `bin` points at `dist/cli.js`); `prepublishOnly`
+runs it automatically.
 
 ## License
 

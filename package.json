@@ -26,13 +26,13 @@
   "author": "Sergiy Payu",
   "license": "MIT",
   "bin": {
-    "angular-esbuild-visualizer": "./src/cli.ts"
+    "angular-esbuild-visualizer": "./dist/cli.js"
   },
   "scripts": {
     "start": "node --experimental-strip-types src/cli.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/postbuild.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "prepublishOnly": "npm run typecheck"
+    "prepublishOnly": "npm run build"
   },
   "engines": {
     "node": ">=22.6.0"
@@ -43,7 +43,6 @@
     "typescript": "^5.4.0"
   },
   "files": [
-    "src",
     "dist",
     "README.md",
     "LICENSE"
