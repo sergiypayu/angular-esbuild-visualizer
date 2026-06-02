@@ -96,7 +96,7 @@
       row.appendChild(bar);
       row.appendChild(el("span", "size", fmtBytes(m.bytes)));
     }
-    if (m.label && m.label.length && !node.ref) row.appendChild(el("span", "label", "[" + m.label.join(", ") + "]"));
+    if (m.label && m.label.length && node.file !== "index.html") row.appendChild(el("span", "label", "[" + m.label.join(", ") + "]"));
     row._node = node;
     row.addEventListener("click", function () {
       if (selectedRow) selectedRow.classList.remove("selected");
