@@ -60,13 +60,17 @@
   var search = document.getElementById("search");
   var selectedRow = null;
   var roots = [DATA.tree];        // current forest (model nodes)
+  var currentView = "tree";       // "tree" | "routes" — which forest is shown
   var AUTO_COLLAPSE_DEPTH = 2;
 
   function badges(node, m) {
     var frag = document.createDocumentFragment();
     if (node.ref) {
-      frag.appendChild(el("span", "badge " + (node.refReason === "shared-eager" ? "shared" : "ref"),
-        node.refReason === "shared-eager" ? "shared" : "ref"));
+      var shared = node.refReason === "shared-eager";
+      var b = el("span", "badge jump " + (shared ? "shared" : "ref"), shared ? "shared" : "ref");
+      b.title = "Jump to where " + node.file + " is expanded";
+      b.addEventListener("click", function (ev) { ev.stopPropagation(); revealCanonical(node.file); });
+      frag.appendChild(b);
       return frag;
     }
     if (m.isEntryHtml) frag.appendChild(el("span", "badge entry", "entry"));
@@ -152,6 +156,56 @@
       var t = k.parentElement.querySelector(".toggle");
       if (t && !t.classList.contains("leaf")) t.textContent = "▶";
     });
+  }
+
+  // ---- jump from a back-reference (ref/shared badge) to the chunk's --------
+  //      canonical, fully-expanded node, revealing it in the tree.
+  // A file has exactly one non-ref node per forest; eager chunks live in the
+  // tree view, lazy chunks in the routes view. Find it, switch view if needed,
+  // expand its ancestors, then select + scroll to it.
+  function findPath(forestRoots, file) {
+    var found = null;
+    function dfs(node, trail) {
+      trail.push(node);
+      if (node.file === file && !node.ref) found = trail.slice();
+      else for (var i = 0; i < node.children.length && !found; i++) dfs(node.children[i], trail);
+      trail.pop();
+    }
+    for (var i = 0; i < forestRoots.length && !found; i++) dfs(forestRoots[i], []);
+    return found;
+  }
+  function childWrapFor(container, node) {
+    for (var i = 0; i < container.children.length; i++) {
+      if (container.children[i]._node === node) return container.children[i];
+    }
+    return null;
+  }
+  function openWrap(wrap) {
+    if (!wrap._kids) return;
+    populate(wrap);
+    wrap._kids.classList.remove("collapsed");
+    if (wrap._toggle) wrap._toggle.textContent = "▼";
+  }
+  function revealCanonical(file) {
+    var view = "tree", path = findPath([DATA.tree], file);
+    if (!path) { path = findPath(DATA.routes, file); view = "routes"; }
+    if (!path) return;
+    // The DOM walk below needs the right forest, unfiltered and freshly laid out.
+    if (search.value) { search.value = ""; activate(view); }
+    else if (view !== currentView) activate(view);
+
+    var container = treePane, wrap = null;
+    for (var i = 0; i < path.length; i++) {
+      wrap = childWrapFor(container, path[i]);
+      if (!wrap) return; // tree changed under us; give up quietly
+      if (i < path.length - 1) { openWrap(wrap); container = wrap._kids; }
+    }
+    var row = wrap.firstElementChild; // the node's own .row
+    if (selectedRow) selectedRow.classList.remove("selected");
+    selectedRow = row; row.classList.add("selected");
+    selectChunk(file);
+    row.scrollIntoView({ block: "center" });
+    row.classList.remove("flash"); void row.offsetWidth; row.classList.add("flash");
   }
 
   // ---- search over the data model (finds not-yet-rendered nodes) --------
@@ -302,6 +356,7 @@
   var tabTree = document.getElementById("tab-tree");
   var tabRoutes = document.getElementById("tab-routes");
   function activate(which) {
+    currentView = which;
     tabTree.classList.toggle("active", which === "tree");
     tabRoutes.classList.toggle("active", which === "routes");
     roots = which === "tree" ? [DATA.tree] : DATA.routes;

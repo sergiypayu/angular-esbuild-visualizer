@@ -99,6 +99,11 @@ main { display: grid; grid-template-columns: minmax(420px, 1fr) minmax(380px, 0.
 .badge.preload { background: #2c7; }
 .badge.ref { background: var(--ref); color: #fff; }
 .badge.shared { background: var(--shared); color: #fff; }
+.badge.jump { cursor: pointer; }
+.badge.jump::after { content: " ⤴"; }
+.badge.jump:hover { outline: 1px solid #ffffff8c; }
+@keyframes rowflash { from { background: #ffd54a66; } to { background: transparent; } }
+.row.flash { animation: rowflash 1.1s ease-out; }
 .children { margin-left: 14px; border-left: 1px dotted var(--border); }
 .children.collapsed { display: none; }
 
