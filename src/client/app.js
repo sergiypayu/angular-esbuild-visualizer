@@ -65,7 +65,10 @@
   var selectedRow = null;
   var roots = [DATA.tree];        // current forest (model nodes)
   var currentView = "tree";       // "tree" | "routes" — which forest is shown
+  var forestCache = { tree: null, routes: null }; // rendered forest DOM, kept alive per view
+  var viewScroll = { tree: 0, routes: 0 };        // last scroll position per view
   var RESTORING = false;          // true while applying history state (suppress pushes)
+  var NAV = false;                // true mid-navigation (suppress scroll capture during re-render)
   // How deep to auto-expand on (re)render: tree view opens index.html only
   // (its root children visible but collapsed); routes view stays fully collapsed.
   var autoExpandDepth = 1;
@@ -142,12 +145,24 @@
     return wrap;
   }
 
-  function renderForest() {
-    treePane.innerHTML = "";
-    if (!roots.length) { treePane.appendChild(el("div", "empty", "Nothing to show.")); return; }
-    roots.forEach(function (r) { treePane.appendChild(renderNode(r, 0)); });
-    selectedRow = null;
+  // Build a view's forest once. The initial collapse (autoExpandDepth) is
+  // applied here, so it happens only at build time — never again on re-show.
+  function buildForest(view) {
+    autoExpandDepth = view === "tree" ? 1 : 0; // tree: open index.html; routes: all collapsed
+    var rts = view === "tree" ? [DATA.tree] : DATA.routes;
+    var arr = [];
+    rts.forEach(function (r) { arr.push(renderNode(r, 0)); });
+    if (!arr.length) arr.push(el("div", "empty", "Nothing to show."));
+    return arr;
   }
+  // Show a view's forest, reusing its cached DOM so expansion state and scroll
+  // survive tab switches and Back/Forward (detached nodes keep their listeners).
+  function showForest(view) {
+    treePane.innerHTML = "";
+    if (!forestCache[view]) forestCache[view] = buildForest(view);
+    forestCache[view].forEach(function (n) { treePane.appendChild(n); });
+  }
+  function renderForest() { showForest(currentView); }
 
   function expandWrap(wrap) {
     if (!wrap._kids) return;
@@ -197,6 +212,7 @@
     var view = "tree", path = findPath([DATA.tree], file);
     if (!path) { path = findPath(DATA.routes, file); view = "routes"; }
     if (!path) return;
+    saveScroll(); // record the outgoing entry's scroll before we scroll the tree
     // Apply the tab switch + selection as one navigation (single history entry).
     var wasRestoring = RESTORING; RESTORING = true;
     // The DOM walk below needs the right forest, unfiltered and freshly laid out.
@@ -244,7 +260,7 @@
   }
   function applySearch(q) {
     q = q.trim().toLowerCase();
-    if (!q) { renderForest(); return; }
+    if (!q) { renderForest(); treePane.scrollTop = viewScroll[currentView] || 0; return; }
     treePane.innerHTML = "";
     var any = false;
     roots.forEach(function (r) {
@@ -373,10 +389,12 @@
     detail.appendChild(table);
   }
   function selectChunk(file) {
+    beginNav();
     detail._eager = false; detail._module = null;
     if (file === "index.html") {
       detail.innerHTML = ""; detail._file = null;
       detail.appendChild(el("div", "empty", "index.html — synthetic root. Pick a chunk, or click “eager initial” for the bundle breakdown."));
+      pushHistory();
       return;
     }
     var m = meta(file);
@@ -414,6 +432,7 @@
     return root;
   }
   function selectEagerBundle() {
+    beginNav();
     detail._eager = true; detail._file = null; detail._module = null;
     if (selectedRow) { selectedRow.classList.remove("selected"); selectedRow = null; }
     var contents = eagerContents();
@@ -485,6 +504,7 @@
   };
   function shortName(p) { return p.replace(/^node_modules\//, ""); }
   function selectModule(path) {
+    beginNav();
     ensureModuleIndex();
     detail._eager = false; detail._file = null; detail._module = path;
     detail.innerHTML = "";
@@ -535,12 +555,14 @@
   var tabTree = document.getElementById("tab-tree");
   var tabRoutes = document.getElementById("tab-routes");
   function activate(which) {
+    beginNav();
+    if (currentView !== which) viewScroll[currentView] = treePane.scrollTop; // remember outgoing
     currentView = which;
-    autoExpandDepth = which === "tree" ? 1 : 0; // tree: open index.html; routes: all collapsed
     tabTree.classList.toggle("active", which === "tree");
     tabRoutes.classList.toggle("active", which === "routes");
     roots = which === "tree" ? [DATA.tree] : DATA.routes;
-    if (search.value) applySearch(search.value); else renderForest();
+    if (search.value) { applySearch(search.value); }
+    else { showForest(which); treePane.scrollTop = viewScroll[which] || 0; }
     pushHistory();
   }
   tabTree.addEventListener("click", function () { activate("tree"); });
@@ -618,10 +640,36 @@
     catch (e) { try { history[replace ? "replaceState" : "pushState"](st, ""); } catch (e2) { /* ignore */ } }
     lastHash = h;
   }
+
+  // --- scroll-position memory: keep each entry's pane scroll, restore on Back.
+  function scrollNow() { return { tree: treePane.scrollTop, detail: detail.scrollTop }; }
+  function saveScroll() { // merge the live scroll into the current history entry
+    if (RESTORING || NAV || !history.state) return;
+    try { history.replaceState(Object.assign({}, history.state, { scroll: scrollNow() }), ""); } catch (e) { /* ignore */ }
+  }
+  function restoreScroll(st) {
+    var sc = st && st.scroll;
+    treePane.scrollTop = sc ? (sc.tree || 0) : 0;
+    detail.scrollTop = sc ? (sc.detail || 0) : 0;
+  }
+  // Called at the start of each navigation: snapshot the outgoing scroll, then
+  // mute the scroll listener so the re-render's reset doesn't overwrite it.
+  function beginNav() { if (RESTORING) return; saveScroll(); NAV = true; }
+  var scrollRaf = 0;
+  function onPaneScroll() {
+    if (scrollRaf) return;
+    scrollRaf = requestAnimationFrame(function () { scrollRaf = 0; saveScroll(); });
+  }
+  treePane.addEventListener("scroll", onPaneScroll, { passive: true });
+  detail.addEventListener("scroll", onPaneScroll, { passive: true });
+
   function pushHistory() {
+    NAV = false; // navigation finished; re-enable scroll capture
     if (RESTORING) return;
-    if (hashFor(currentState()) === lastHash) return; // don't stack no-op navigations
-    setHistory(currentState(), false);
+    var st = currentState();
+    if (hashFor(st) === lastHash) return; // don't stack no-op navigations
+    st.scroll = scrollNow();
+    setHistory(st, false);
   }
   function applyDetail(d) {
     if (d && d.type === "chunk") selectChunk(d.file);
@@ -638,9 +686,12 @@
     var st = ev.state || parseHash(location.hash) || { tab: "tree", detail: { type: "eager" } };
     applyState(st);
     lastHash = hashFor(st);
+    restoreScroll(st);
+    requestAnimationFrame(function () { restoreScroll(st); }); // again once layout settles
   });
 
   // Initial view: honor a deep-link hash, else default to the eager bundle.
   applyState(parseHash(location.hash) || { tab: "tree", detail: { type: "eager" } }, true);
-  setHistory(currentState(), true);
+  var initState = currentState(); initState.scroll = scrollNow();
+  setHistory(initState, true);
 })();
