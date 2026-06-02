@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import type { HtmlEntries } from "./html-entry.ts";
 import { dynamicImports, isJs, staticImports } from "./metafile.ts";
 import type {
@@ -409,6 +409,7 @@ export async function buildModel(
 
   return {
     title: opts.title,
+    source: basename(resolve(opts.dir)) || opts.dir,
     generatedAt: new Date().toISOString(),
     summary,
     chunks,

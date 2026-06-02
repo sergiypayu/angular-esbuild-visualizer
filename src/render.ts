@@ -48,7 +48,7 @@ export async function renderHtml(data: VisualizerData): Promise<string> {
 <body>
 <header>
   <h1>${title}</h1>
-  <span class="gen">${escapeHtml(data.generatedAt)}</span>
+  <span class="gen" title="generated ${escapeHtml(data.generatedAt)}">${escapeHtml(data.source)}</span>
   <div class="stats" id="stats"></div>
 </header>
 <div class="legend">

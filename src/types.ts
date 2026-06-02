@@ -116,6 +116,8 @@ export interface ModuleGraph {
 
 export interface VisualizerData {
   title: string;
+  /** Friendly name of the analyzed bundle directory (its basename). */
+  source: string;
   generatedAt: string;
   summary: Summary;
   chunks: Record<string, ChunkMeta>;
