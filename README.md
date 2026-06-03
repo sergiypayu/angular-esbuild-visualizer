@@ -126,14 +126,30 @@ ordered the way the app loads:
 
 ### Analyzing size
 
-- **Eager initial bundle breakdown** — the detail pane opens on an aggregate
-  treemap + module table of the *entire* eager closure (every initial chunk's
-  original modules merged, coloured by `node_modules` package), so you can see
-  what fills your first-load budget at a glance. Click the **eager initial**
-  stat in the header to return to it.
-- **Click a chunk** to inspect its contents: a squarified **treemap** of the
-  original modules plus a table sorted by contributed bytes.
-- **“Why is this loaded?”** — click any module row (in the eager breakdown or a
+- **Merged bundle view** (the `▦` icon) — every *boundary* node carries a `▦`
+  icon that opens an aggregate treemap + module table of everything that node
+  loads (each contributing chunk's original modules merged, coloured by
+  `node_modules` package):
+  - **`index.html`** → the *entire* eager closure — what fills your first-load
+    budget. This is the default view; reopen it via the header's **eager
+    initial** stat, the `index.html` row, or its icon.
+  - **a route root** → the route's own static closure (the lazy chunk plus
+    everything it statically pulls in, stopping at nested lazy routes) — i.e.
+    what downloads when you navigate there. The sub-line also notes the
+    already-eager weight it *shares* (free on navigation).
+
+    *What counts toward a route's size:* a statically-imported chunk is part of
+    the route's **own** download only if it isn't already eager — chunks in the
+    initial bundle load regardless, so they're excluded from the size and
+    reported separately as *shared eager*. A non-eager chunk shared by several
+    lazy routes is counted in **each** of their bundles, because every one of
+    those navigations really does fetch it. ("Eager" is decided once: a chunk
+    reached only through `import()` is never eager, even if many routes share
+    it.)
+- **Click a chunk** (the row name) to inspect that single chunk's contents: a
+  squarified **treemap** of the original modules plus a table sorted by
+  contributed bytes.
+- **“Why is this loaded?”** — click any module row (in a bundle breakdown or a
   chunk) to trace its **reverse import chain** up to the nearest entry, each hop
   labelled `import` / `require` / `dynamic` and clickable to walk further, plus
   the module's direct importers. A banner classifies *why* it's in the bundle:
@@ -151,7 +167,7 @@ ordered the way the app loads:
   ancestor path of every match.
 - **Jump to definition** — clicking a `ref` / `shared` back-reference badge
   reveals and scrolls to the chunk's canonical, fully-expanded node.
-- **Back / Forward** — every navigation (chunk, module, eager bundle, ref jump)
+- **Back / Forward** — every navigation (chunk, module, merged bundle, ref jump)
   is a browser history entry, and the current view is deep-linkable via the URL
   hash.
 - **Badges**: `entry` (referenced by a `<script>`), `preload`

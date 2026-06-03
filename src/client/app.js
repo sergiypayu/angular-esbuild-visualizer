@@ -50,7 +50,10 @@
   var eagerStat = stat("eager initial", fmtBytes(s.eagerJsBytes) + " · " + s.eagerChunkCount);
   eagerStat.className = "stat clickable";
   eagerStat.title = "Show what fills the eager initial bundle";
-  eagerStat.addEventListener("click", function () { selectEagerBundle(); });
+  eagerStat.addEventListener("click", function () {
+    if (selectedRow) { selectedRow.classList.remove("selected"); selectedRow = null; }
+    selectBundle("index.html");
+  });
   statRow.appendChild(eagerStat);
   statRow.appendChild(stat("lazy", fmtBytes(s.lazyJsBytes) + " · " + s.lazyChunkCount));
   statRow.appendChild(stat("total JS", fmtBytes(s.totalJsBytes)));
@@ -102,6 +105,22 @@
     var nameCls = "fname " + (node.ref ? "ref" : node.kind === "lazy" ? "lazy" : node.kind === "entry" ? "entry" : "");
     row.appendChild(el("span", nameCls, (node.ref ? "↪ " : "") + node.file));
     row.appendChild(badges(node, m));
+    // Boundary nodes (index.html + lazy routes) get a "merged bundle" icon: it
+    // opens the aggregate of everything that node loads, vs. the row name which
+    // inspects the single chunk.
+    if (node.file === "index.html" || (node.kind === "lazy" && !node.ref)) {
+      var bicon = el("span", "bundle-icon", "▦");
+      bicon.title = node.file === "index.html"
+        ? "View the whole initial bundle"
+        : "View everything this route loads";
+      bicon.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        if (selectedRow) selectedRow.classList.remove("selected");
+        selectedRow = row; row.classList.add("selected");
+        selectBundle(node.file);
+      });
+      row.appendChild(bicon);
+    }
     if (!node.ref && node.file !== "index.html") {
       var bar = el("span", "bar");
       bar.style.width = Math.max(3, Math.round((m.bytes / maxBytes) * 70)) + "px";
@@ -389,14 +408,9 @@
     detail.appendChild(table);
   }
   function selectChunk(file) {
+    if (file === "index.html") return selectBundle(file); // synthetic root → its bundle
     beginNav();
-    detail._eager = false; detail._module = null;
-    if (file === "index.html") {
-      detail.innerHTML = ""; detail._file = null;
-      detail.appendChild(el("div", "empty", "index.html — synthetic root. Pick a chunk, or click “eager initial” for the bundle breakdown."));
-      pushHistory();
-      return;
-    }
+    detail._bundle = null; detail._module = null;
     var m = meta(file);
     var sub = fmtBytes(m.bytes) + " · " + m.moduleCount + " module" + (m.moduleCount === 1 ? "" : "s")
       + (m.entryPoint ? " · entry: " + m.entryPoint : "") + (m.inEager ? " · eager" : " · lazy");
@@ -405,10 +419,10 @@
     pushHistory();
   }
 
-  // Merge every eager chunk's original-module hierarchy into one tree so the
-  // treemap shows the whole initial bundle's content (by package/path), not
-  // just one chunk. Directory nodes merge by name; module leaves are unique
-  // per output, so their sizes simply accumulate.
+  // Merge a set of chunks' original-module hierarchies into one tree so the
+  // treemap shows a whole bundle's content (by package/path), not just one
+  // chunk. Directory nodes merge by name; module leaves are unique per output,
+  // so their sizes simply accumulate.
   function mergeInto(target, children) {
     (children || []).forEach(function (child) {
       target.children = target.children || [];
@@ -424,23 +438,53 @@
       }
     });
   }
-  function eagerContents() {
-    var root = { name: "eager bundle", children: [] };
-    Object.keys(chunks).forEach(function (file) {
-      if (chunks[file].inEager) mergeInto(root, chunks[file].contents.children);
-    });
+  function mergeChunks(files, name) {
+    var root = { name: name, children: [] };
+    files.forEach(function (f) { if (chunks[f]) mergeInto(root, chunks[f].contents.children); });
     return root;
   }
-  function selectEagerBundle() {
+  function sumBytes(files) {
+    var t = 0; files.forEach(function (f) { if (chunks[f]) t += chunks[f].bytes; }); return t;
+  }
+  // What a "boundary" node (index.html or a lazy route) loads: the chunk's own
+  // static closure — itself plus every statically-imported chunk, stopping at
+  // nested lazy routes (separate downloads). already-eager deps reached along
+  // the way are collected separately as `shared` (free on navigation).
+  function collectBundle(root) {
+    var own = [], ownSeen = {}, sharedSeen = {};
+    (function walk(node) {
+      if (!ownSeen[node.file]) {
+        ownSeen[node.file] = true;
+        if (node.file !== "index.html") own.push(node.file); // synthetic root has no content
+      }
+      (node.children || []).forEach(function (c) {
+        if (c.ref) { if (c.refReason === "shared-eager") sharedSeen[c.file] = true; return; }
+        if (c.kind === "lazy") return; // nested route → not loaded with this one
+        walk(c);
+      });
+    })(root);
+    return { own: own, shared: Object.keys(sharedSeen) };
+  }
+  // Show the merged bundle for index.html (initial load) or a lazy route node.
+  // `file` identifies the boundary chunk; its canonical tree node is resolved
+  // from the forest so the view survives deep-links and Back/Forward.
+  function selectBundle(file) {
     beginNav();
-    detail._eager = true; detail._file = null; detail._module = null;
-    if (selectedRow) { selectedRow.classList.remove("selected"); selectedRow = null; }
-    var contents = eagerContents();
+    var path = findPath(FOREST, file);
+    var node = path ? path[path.length - 1] : (file === "index.html" ? DATA.tree : null);
+    if (!node) { detail._bundle = null; return selectChunk(file); } // unknown → single chunk
+    detail._bundle = file; detail._file = null; detail._module = null;
+    var initial = file === "index.html";
+    var b = collectBundle(node);
+    var contents = mergeChunks(b.own, initial ? "initial bundle" : "route bundle");
     var leaves = []; flatLeaves(contents, "", leaves);
     var attributed = leaves.reduce(function (a, l) { return a + l.bytes; }, 0);
-    var sub = fmtBytes(s.eagerJsBytes) + " across " + s.eagerChunkCount + " chunks · "
-      + leaves.length + " modules · " + fmtBytes(attributed) + " attributed to source";
-    renderTreemapDetail("Eager initial bundle", sub, contents);
+    var ownBytes = sumBytes(b.own);
+    var title = initial ? "Initial bundle" : ("Route bundle " + (node.routePath || node.file));
+    var sub = fmtBytes(ownBytes) + " across " + b.own.length + " chunk" + (b.own.length === 1 ? "" : "s")
+      + " · " + leaves.length + " modules · " + fmtBytes(attributed) + " attributed to source"
+      + (!initial && b.shared.length ? " · +" + fmtBytes(sumBytes(b.shared)) + " shared eager (already loaded)" : "");
+    renderTreemapDetail(title, sub, contents);
     pushHistory();
   }
 
@@ -506,7 +550,7 @@
   function selectModule(path) {
     beginNav();
     ensureModuleIndex();
-    detail._eager = false; detail._file = null; detail._module = path;
+    detail._bundle = null; detail._file = null; detail._module = path;
     detail.innerHTML = "";
     detail.appendChild(el("h2", null, path.split("/").pop()));
     detail.appendChild(el("div", "sub mpath", path));
@@ -557,7 +601,7 @@
   var searchTimer;
   search.addEventListener("input", function () { clearTimeout(searchTimer); searchTimer = setTimeout(function () { applySearch(search.value); }, 140); });
   function redrawDetail() {
-    if (detail._eager) selectEagerBundle();
+    if (detail._bundle) selectBundle(detail._bundle);
     else if (detail._module) selectModule(detail._module);
     else if (detail._file) selectChunk(detail._file);
   }
@@ -590,12 +634,12 @@
 
   // ---- history / back-button routing ------------------------------------
   // State = what the detail pane shows. Each user navigation (select
-  // chunk/module, open eager bundle, jump to a ref) pushes one entry;
+  // chunk/module, open a merged bundle, jump to a ref) pushes one entry;
   // Back/Forward restore it.
   function currentState() {
     var d;
     if (detail._module) d = { type: "module", path: detail._module };
-    else if (detail._eager) d = { type: "eager" };
+    else if (detail._bundle) d = { type: "bundle", file: detail._bundle };
     else if (detail._file) d = { type: "chunk", file: detail._file };
     else d = { type: "none" };
     return { detail: d };
@@ -604,15 +648,16 @@
     var frag = "", d = st.detail || { type: "none" };
     if (d.type === "chunk") frag = "chunk/" + encodeURIComponent(d.file);
     else if (d.type === "module") frag = "module/" + encodeURIComponent(d.path);
-    else if (d.type === "eager") frag = "eager";
+    else if (d.type === "bundle") frag = "bundle/" + encodeURIComponent(d.file);
     return "#" + frag;
   }
   function parseHash(h) {
     if (!h || h.length < 2) return null;
     var parts = h.slice(1).split("/");
-    var d = { type: "eager" };
+    var d = { type: "bundle", file: "index.html" };
     if (parts[0] === "chunk" && parts[1]) d = { type: "chunk", file: decodeURIComponent(parts[1]) };
     else if (parts[0] === "module" && parts[1]) d = { type: "module", path: decodeURIComponent(parts[1]) };
+    else if (parts[0] === "bundle" && parts[1]) d = { type: "bundle", file: decodeURIComponent(parts[1]) };
     return { detail: d };
   }
   var lastHash = null;
@@ -662,7 +707,8 @@
   function applyDetail(d) {
     if (d && d.type === "chunk") selectChunk(d.file);
     else if (d && d.type === "module") selectModule(d.path);
-    else selectEagerBundle();
+    else if (d && d.type === "bundle") selectBundle(d.file);
+    else selectBundle("index.html");
   }
   function applyState(st) {
     RESTORING = true;
@@ -670,7 +716,7 @@
     RESTORING = false;
   }
   window.addEventListener("popstate", function (ev) {
-    var st = ev.state || parseHash(location.hash) || { detail: { type: "eager" } };
+    var st = ev.state || parseHash(location.hash) || { detail: { type: "bundle", file: "index.html" } };
     applyState(st);
     lastHash = hashFor(st);
     restoreScroll(st);
@@ -678,9 +724,9 @@
   });
 
   // Initial render: lay out the forest, then honor a deep-link hash (default: the
-  // eager bundle breakdown).
+  // initial-bundle breakdown).
   renderForest();
-  applyState(parseHash(location.hash) || { detail: { type: "eager" } });
+  applyState(parseHash(location.hash) || { detail: { type: "bundle", file: "index.html" } });
   var initState = currentState(); initState.scroll = scrollNow();
   setHistory(initState, true);
 })();
