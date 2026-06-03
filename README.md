@@ -126,14 +126,14 @@ ordered the way the app loads:
 
 ### Analyzing size
 
-- **Merged bundle view** (the `▦` icon) — every *boundary* node carries a `▦`
-  icon that opens an aggregate treemap + module table of everything that node
-  loads (each contributing chunk's original modules merged, coloured by
-  `node_modules` package):
+- **Merged bundle view** — clicking a *boundary* row (`index.html` or any lazy
+  route) opens an aggregate treemap + module table of everything that node loads
+  (each contributing chunk's original modules merged, coloured by `node_modules`
+  package). The row's size is this bundle's total:
   - **`index.html`** → the *entire* eager closure — what fills your first-load
     budget. This is the default view; reopen it via the header's **eager
-    initial** stat, the `index.html` row, or its icon.
-  - **a route root** → the route's own static closure (the lazy chunk plus
+    initial** stat or the `index.html` row.
+  - **a lazy route** → the route's own static closure (the lazy chunk plus
     everything it statically pulls in, stopping at nested lazy routes) — i.e.
     what downloads when you navigate there. The sub-line also notes the
     already-eager weight it *shares* (free on navigation).
@@ -146,9 +146,9 @@ ordered the way the app loads:
     those navigations really does fetch it. ("Eager" is decided once: a chunk
     reached only through `import()` is never eager, even if many routes share
     it.)
-- **Click a chunk** (the row name) to inspect that single chunk's contents: a
-  squarified **treemap** of the original modules plus a table sorted by
-  contributed bytes.
+- **Inspect a single chunk** — expand a route and click its **first child**, the
+  route's own entry chunk (or click any non-boundary chunk row): a squarified
+  **treemap** of the original modules plus a table sorted by contributed bytes.
 - **“Why is this loaded?”** — click any module row (in a bundle breakdown or a
   chunk) to trace its **reverse import chain** up to the nearest entry, each hop
   labelled `import` / `require` / `dynamic` and clickable to walk further, plus

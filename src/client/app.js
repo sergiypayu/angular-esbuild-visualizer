@@ -95,44 +95,56 @@
     return frag;
   }
 
+  // A "boundary" row (index.html or a lazy route) opens the merged bundle of
+  // everything it loads; every other row opens its single-chunk contents. The
+  // synthetic self-chunk child (see populate) is not a boundary.
+  function isBoundary(node) {
+    return !node._self && (node.file === "index.html" || (node.kind === "lazy" && !node.ref));
+  }
+  function openNode(node) {
+    if (isBoundary(node)) selectBundle(node.file);
+    else selectChunk(node.file);
+  }
+  var bundleSizeCache = {};
+  function bundleOwnBytes(node) {
+    if (node.file in bundleSizeCache) return bundleSizeCache[node.file];
+    return (bundleSizeCache[node.file] = sumBytes(collectBundle(node).own));
+  }
+
   function buildRow(node) {
     var m = meta(node.file);
     var row = el("div", "row");
-    var hasChildren = node.children && node.children.length > 0;
+    // Lazy routes are always expandable: even with no further imports they reveal
+    // their own entry chunk (injected by populate).
+    var injectsSelf = !node._self && node.kind === "lazy" && !node.ref;
+    var hasChildren = injectsSelf || (node.children && node.children.length > 0);
     var toggle = el("span", "toggle" + (hasChildren ? "" : " leaf"), hasChildren ? "▶" : "•");
     row.appendChild(toggle);
     if (node.routePath) row.appendChild(el("span", "route-path", node.routePath));
     var nameCls = "fname " + (node.ref ? "ref" : node.kind === "lazy" ? "lazy" : node.kind === "entry" ? "entry" : "");
     row.appendChild(el("span", nameCls, (node.ref ? "↪ " : "") + node.file));
     row.appendChild(badges(node, m));
-    // Boundary nodes (index.html + lazy routes) get a "merged bundle" icon: it
-    // opens the aggregate of everything that node loads, vs. the row name which
-    // inspects the single chunk.
-    if (node.file === "index.html" || (node.kind === "lazy" && !node.ref)) {
-      var bicon = el("span", "bundle-icon", "▦");
-      bicon.title = node.file === "index.html"
-        ? "View the whole initial bundle"
-        : "View everything this route loads";
-      bicon.addEventListener("click", function (ev) {
-        ev.stopPropagation();
-        if (selectedRow) selectedRow.classList.remove("selected");
-        selectedRow = row; row.classList.add("selected");
-        selectBundle(node.file);
-      });
-      row.appendChild(bicon);
-    }
-    if (!node.ref && node.file !== "index.html") {
+    if (isBoundary(node)) {
+      // The row represents the bundle it loads: show the aggregate (own) size,
+      // not the entry chunk's size, and no module label.
+      var bb = bundleOwnBytes(node);
+      var bbar = el("span", "bar");
+      bbar.style.width = Math.min(70, Math.max(3, Math.round((bb / maxBytes) * 70))) + "px";
+      row.appendChild(bbar);
+      row.appendChild(el("span", "size", fmtBytes(bb)));
+    } else if (!node.ref && node.file !== "index.html") {
       var bar = el("span", "bar");
       bar.style.width = Math.max(3, Math.round((m.bytes / maxBytes) * 70)) + "px";
       row.appendChild(bar);
       row.appendChild(el("span", "size", fmtBytes(m.bytes)));
+      if (m.label && m.label.length) row.appendChild(el("span", "label", "[" + m.label.join(", ") + "]"));
     }
-    if (m.label && m.label.length && node.file !== "index.html") row.appendChild(el("span", "label", "[" + m.label.join(", ") + "]"));
     row._node = node;
     row.addEventListener("click", function () {
       if (selectedRow) selectedRow.classList.remove("selected");
       selectedRow = row; row.classList.add("selected");
-      selectChunk(node.file);
+      if (node._self) selectChunk(node.file); // the route's own entry chunk
+      else openNode(node);
     });
     return { row: row, toggle: toggle, hasChildren: hasChildren };
   }
@@ -141,6 +153,11 @@
     if (wrap._populated) return;
     wrap._populated = true;
     var node = wrap._node, depth = wrap._depth;
+    // For a lazy route, surface its own entry chunk as the first child so the
+    // single-chunk view stays reachable — the route row itself opens the bundle.
+    if (!node._self && node.kind === "lazy" && !node.ref) {
+      wrap._kids.appendChild(renderNode({ file: node.file, kind: "lazy", _self: true, children: [] }, depth + 1));
+    }
     node.children.forEach(function (c) { wrap._kids.appendChild(renderNode(c, depth + 1)); });
   }
 
@@ -247,7 +264,7 @@
     var row = wrap.firstElementChild; // the node's own .row
     if (selectedRow) selectedRow.classList.remove("selected");
     selectedRow = row; row.classList.add("selected");
-    selectChunk(file);
+    openNode(wrap._node); // eager chunk → single view; lazy route → its bundle
     row.scrollIntoView({ block: "center" });
     row.classList.remove("flash"); void row.offsetWidth; row.classList.add("flash");
     RESTORING = wasRestoring;
