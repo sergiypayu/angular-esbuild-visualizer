@@ -131,8 +131,7 @@ ordered the way the app loads:
   (each contributing chunk's original modules merged, coloured by `node_modules`
   package). The row's size is this bundle's total:
   - **`index.html`** → the *entire* eager closure — what fills your first-load
-    budget. This is the default view; reopen it via the header's **eager
-    initial** stat or the `index.html` row.
+    budget. This is the default view; reopen it by clicking the `index.html` row.
   - **a lazy route** → the route's own static closure (the lazy chunk plus
     everything it statically pulls in, stopping at nested lazy routes) — i.e.
     what downloads when you navigate there. The sub-line also notes the
@@ -149,9 +148,11 @@ ordered the way the app loads:
 - **Inspect a single chunk** — expand a route and click its **first child**, the
   route's own entry chunk (or click any non-boundary chunk row): a squarified
   **treemap** of the original modules plus a table sorted by contributed bytes.
-- **“Why is this loaded?”** — click any module row to trace its **reverse import
-  chain**. When you open it from a bundle, the chain is the path *within that
-  bundle* — up to the bundle's own entry (e.g. the route you're inspecting),
+- **“Why is this loaded?”** — click any module (a table row **or a treemap
+  tile**) to trace its **reverse import chain**; a **Back** button returns to the
+  view you came from. When you open it from a bundle, the chain is the path
+  *within that bundle* — up to the bundle's own entry (e.g. the route you're
+  inspecting),
   answering "what pulled it in *here*" rather than whichever entry is nearest
   globally. Each hop is labelled `import` / `require` / `dynamic` and clickable to
   walk further (keeping the bundle context), plus the module's direct importers.

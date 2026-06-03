@@ -47,14 +47,7 @@
     return d;
   }
   statRow.appendChild(stat("JS chunks", String(s.jsChunkCount)));
-  var eagerStat = stat("eager initial", fmtBytes(s.eagerJsBytes) + " · " + s.eagerChunkCount);
-  eagerStat.className = "stat clickable";
-  eagerStat.title = "Show what fills the eager initial bundle";
-  eagerStat.addEventListener("click", function () {
-    if (selectedRow) { selectedRow.classList.remove("selected"); selectedRow = null; }
-    selectBundle("index.html");
-  });
-  statRow.appendChild(eagerStat);
+  statRow.appendChild(stat("eager initial", fmtBytes(s.eagerJsBytes) + " · " + s.eagerChunkCount));
   statRow.appendChild(stat("lazy", fmtBytes(s.lazyJsBytes) + " · " + s.lazyChunkCount));
   statRow.appendChild(stat("total JS", fmtBytes(s.totalJsBytes)));
   statRow.appendChild(stat("dynamic imports", String(s.dynamicEdgeCount)));
@@ -365,7 +358,7 @@
     }
     return worst;
   }
-  function drawTreemap(container, contents) {
+  function drawTreemap(container, contents, ctxFile) {
     container.innerHTML = "";
     sumValue(contents);
     var W = Math.max(300, container.clientWidth - 2), H = 420, rects = [];
@@ -376,10 +369,13 @@
     svg.setAttribute("width", W); svg.setAttribute("height", H);
     rects.forEach(function (r) {
       if (r.w < 0.5 || r.h < 0.5) return;
+      var modPath = r.path.replace(/^[^/]*\//, ""); // drop the bundle/chunk root segment
       var rect = document.createElementNS(ns, "rect");
       rect.setAttribute("x", r.x); rect.setAttribute("y", r.y);
       rect.setAttribute("width", Math.max(0, r.w - 1)); rect.setAttribute("height", Math.max(0, r.h - 1));
       rect.setAttribute("fill", groupColor(r.path));
+      // Clicking a tile opens the same module detail as its table row.
+      rect.addEventListener("click", function () { selectModule(modPath, ctxFile); });
       rect.addEventListener("mousemove", function (ev) {
         tip.style.display = "block";
         tip.textContent = r.path.replace(/^[^/]*\//, "") + "  —  " + fmtBytes(r.value);
@@ -416,7 +412,7 @@
     detail.innerHTML = "";
     detail.appendChild(el("h2", null, titleText));
     detail.appendChild(el("div", "sub", subText));
-    var tm = el("div", null); detail.appendChild(tm); drawTreemap(tm, contents);
+    var tm = el("div", null); detail.appendChild(tm); drawTreemap(tm, contents, ctxFile);
     var leaves = []; flatLeaves(contents, "", leaves); leaves.sort(function (a, b) { return b.bytes - a.bytes; });
     var table = el("table", "mods");
     var head = el("tr"); head.appendChild(el("th", null, "module (" + leaves.length + ")")); head.appendChild(el("th", "n", "bytes")); table.appendChild(head);
@@ -613,6 +609,12 @@
     ensureModuleIndex();
     detail._bundle = null; detail._file = null; detail._module = path; detail._moduleCtx = ctxFile || null;
     detail.innerHTML = "";
+    var back = el("button", "back-btn");
+    back.appendChild(el("span", "ico", "←"));
+    back.appendChild(document.createTextNode("Back"));
+    back.title = "Return to the previous view";
+    back.addEventListener("click", function () { history.back(); });
+    detail.appendChild(back);
     detail.appendChild(el("h2", null, path.split("/").pop()));
     detail.appendChild(el("div", "sub mpath", path));
     var loc = moduleLoc[path] || { chunks: [], bytes: 0 };
