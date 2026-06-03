@@ -149,10 +149,13 @@ ordered the way the app loads:
 - **Inspect a single chunk** — expand a route and click its **first child**, the
   route's own entry chunk (or click any non-boundary chunk row): a squarified
   **treemap** of the original modules plus a table sorted by contributed bytes.
-- **“Why is this loaded?”** — click any module row (in a bundle breakdown or a
-  chunk) to trace its **reverse import chain** up to the nearest entry, each hop
-  labelled `import` / `require` / `dynamic` and clickable to walk further, plus
-  the module's direct importers. A banner classifies *why* it's in the bundle:
+- **“Why is this loaded?”** — click any module row to trace its **reverse import
+  chain**. When you open it from a bundle, the chain is the path *within that
+  bundle* — up to the bundle's own entry (e.g. the route you're inspecting),
+  answering "what pulled it in *here*" rather than whichever entry is nearest
+  globally. Each hop is labelled `import` / `require` / `dynamic` and clickable to
+  walk further (keeping the bundle context), plus the module's direct importers.
+  A banner classifies *why* it's in the bundle:
   - **eager** — statically reachable from an `index.html` entry; cut a static
     edge in the chain to drop it from the initial bundle.
   - **grouped** — *not* statically reachable from an entry; it sits in an eager

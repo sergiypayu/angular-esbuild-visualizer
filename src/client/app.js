@@ -410,8 +410,9 @@
     (node.children || []).forEach(function (c) { flatLeaves(c, (prefix ? prefix + "/" : "") + node.name, out); });
   }
   // Render a title + sub-line + treemap + sorted module table into the detail
-  // pane. Shared by the per-chunk view and the aggregate eager-bundle view.
-  function renderTreemapDetail(titleText, subText, contents) {
+  // pane. `ctxFile` is the chunk/bundle being inspected, so a clicked module
+  // traces its reverse chain within *this* bundle (up to its entry).
+  function renderTreemapDetail(titleText, subText, contents, ctxFile) {
     detail.innerHTML = "";
     detail.appendChild(el("h2", null, titleText));
     detail.appendChild(el("div", "sub", subText));
@@ -424,7 +425,7 @@
       var tr = el("tr", "mrow"); tr.title = "Why is this loaded?";
       tr.appendChild(el("td", null, modPath));
       tr.appendChild(el("td", "n", fmtBytes(l.bytes)));
-      tr.addEventListener("click", function () { selectModule(modPath); });
+      tr.addEventListener("click", function () { selectModule(modPath, ctxFile); });
       table.appendChild(tr);
     });
     detail.appendChild(table);
@@ -457,7 +458,7 @@
       pushHistory();
       return;
     }
-    renderTreemapDetail(m.file, sub, m.contents);
+    renderTreemapDetail(m.file, sub, m.contents, file);
     detail._file = file;
     pushHistory();
   }
@@ -527,7 +528,7 @@
     var sub = fmtBytes(ownBytes) + " across " + b.own.length + " chunk" + (b.own.length === 1 ? "" : "s")
       + " · " + leaves.length + " modules · " + fmtBytes(attributed) + " attributed to source"
       + (!initial && b.shared.length ? " · +" + fmtBytes(sumBytes(b.shared)) + " shared eager (already loaded)" : "");
-    renderTreemapDetail(title, sub, contents);
+    renderTreemapDetail(title, sub, contents, file);
     pushHistory();
   }
 
@@ -590,10 +591,27 @@
     orphan: "No import path to an entry was found.",
   };
   function shortName(p) { return p.replace(/^node_modules\//, ""); }
-  function selectModule(path) {
+  // Stop-set for the reverse BFS given the bundle being inspected: the initial
+  // bundle stops at any index.html entry; a route/chunk stops at its own entry
+  // module — so the chain answers "how it reached *this* bundle", not whichever
+  // route happens to be nearest globally.
+  function ctxStopFor(ctxFile) {
+    if (!ctxFile) return null;
+    if (ctxFile === "index.html") return htmlStop;
+    var ep = chunks[ctxFile] && chunks[ctxFile].entryPoint;
+    var ei = ep != null ? pathIdx[ep] : null;
+    if (ei == null) return null;
+    var s = {}; s[ei] = true; return s;
+  }
+  function entryTag(idx) {
+    if (htmlStop[idx]) return { cls: "entry", txt: "index.html entry" };
+    if (routeStop[idx]) return { cls: "route", txt: "lazy route entry" };
+    return { cls: "route", txt: "bundle entry" };
+  }
+  function selectModule(path, ctxFile) {
     beginNav();
     ensureModuleIndex();
-    detail._bundle = null; detail._file = null; detail._module = path;
+    detail._bundle = null; detail._file = null; detail._module = path; detail._moduleCtx = ctxFile || null;
     detail.innerHTML = "";
     detail.appendChild(el("h2", null, path.split("/").pop()));
     detail.appendChild(el("div", "sub mpath", path));
@@ -604,21 +622,31 @@
 
     var idx = pathIdx[path];
     if (idx == null) { detail.appendChild(el("div", "muted", "Not present in the module graph.")); return; }
+    // Global classification (banner): is it eager / grouped / lazy overall.
     var res = analyzeModule(idx);
     detail.appendChild(el("div", "why-status " + res.status, STATUS_TEXT[res.status]));
 
-    detail.appendChild(el("div", "reasons-h", "Reverse import chain (nearest entry)"));
+    // Chain: prefer the path within the inspected bundle (up to its entry); fall
+    // back to the global nearest-entry chain when there's no bundle context or
+    // the module isn't reachable from its entry (a grouped/co-located module).
+    var ctxStop = ctxStopFor(ctxFile);
+    var chain = null, within = false;
+    if (ctxStop) { chain = bfsTo(idx, ctxStop, false) || bfsTo(idx, ctxStop, true); if (chain) within = true; }
+    if (!chain) chain = res.chain;
+
+    detail.appendChild(el("div", "reasons-h",
+      within ? "Reverse import chain (within this bundle)" : "Reverse import chain (nearest entry)"));
     var box = el("div", "mchain");
-    res.chain.forEach(function (step, i) {
+    chain.forEach(function (step, i) {
       var row = el("div", "mstep");
       if (i > 0) row.appendChild(el("span", "mkind" + (step.kind === 2 ? " dyn" : ""), "⟵ " + (KINDNAME[step.kind] || "")));
       var p = MG.paths[step.idx];
       var crumb = el("span", "mcrumb" + (i === 0 ? " current" : ""), shortName(p));
-      if (i !== 0) crumb.addEventListener("click", function () { selectModule(p); });
+      if (i !== 0) crumb.addEventListener("click", function () { selectModule(p, ctxFile); });
       row.appendChild(crumb);
-      if (i === res.chain.length - 1 && res.status !== "orphan") {
-        var isHtml = htmlStop[step.idx];
-        row.appendChild(el("span", "mtag " + (isHtml ? "entry" : "route"), isHtml ? "index.html entry" : "lazy route entry"));
+      if (i === chain.length - 1 && (within || res.status !== "orphan")) {
+        var t = entryTag(step.idx);
+        row.appendChild(el("span", "mtag " + t.cls, t.txt));
       }
       box.appendChild(row);
     });
@@ -630,7 +658,7 @@
     imps.slice(0, 60).forEach(function (im) {
       var p = MG.paths[im.idx];
       var c = el("span", "chip " + (im.kind === 2 ? "d" : "s"), KINDNAME[im.kind] + ": " + shortName(p));
-      c.addEventListener("click", function () { selectModule(p); });
+      c.addEventListener("click", function () { selectModule(p, ctxFile); });
       chips.appendChild(c);
     });
     if (!imps.length) chips.appendChild(el("span", "muted", "none — this is an entry module"));
@@ -645,7 +673,7 @@
   search.addEventListener("input", function () { clearTimeout(searchTimer); searchTimer = setTimeout(function () { applySearch(search.value); }, 140); });
   function redrawDetail() {
     if (detail._bundle) selectBundle(detail._bundle);
-    else if (detail._module) selectModule(detail._module);
+    else if (detail._module) selectModule(detail._module, detail._moduleCtx);
     else if (detail._file) selectChunk(detail._file);
   }
   window.addEventListener("resize", redrawDetail);
@@ -681,7 +709,7 @@
   // Back/Forward restore it.
   function currentState() {
     var d;
-    if (detail._module) d = { type: "module", path: detail._module };
+    if (detail._module) d = { type: "module", path: detail._module, ctx: detail._moduleCtx || undefined };
     else if (detail._bundle) d = { type: "bundle", file: detail._bundle };
     else if (detail._file) d = { type: "chunk", file: detail._file };
     else d = { type: "none" };
@@ -690,7 +718,7 @@
   function hashFor(st) {
     var frag = "", d = st.detail || { type: "none" };
     if (d.type === "chunk") frag = "chunk/" + encodeURIComponent(d.file);
-    else if (d.type === "module") frag = "module/" + encodeURIComponent(d.path);
+    else if (d.type === "module") frag = "module/" + encodeURIComponent(d.path) + (d.ctx ? "/" + encodeURIComponent(d.ctx) : "");
     else if (d.type === "bundle") frag = "bundle/" + encodeURIComponent(d.file);
     return "#" + frag;
   }
@@ -699,7 +727,7 @@
     var parts = h.slice(1).split("/");
     var d = { type: "bundle", file: "index.html" };
     if (parts[0] === "chunk" && parts[1]) d = { type: "chunk", file: decodeURIComponent(parts[1]) };
-    else if (parts[0] === "module" && parts[1]) d = { type: "module", path: decodeURIComponent(parts[1]) };
+    else if (parts[0] === "module" && parts[1]) d = { type: "module", path: decodeURIComponent(parts[1]), ctx: parts[2] ? decodeURIComponent(parts[2]) : undefined };
     else if (parts[0] === "bundle" && parts[1]) d = { type: "bundle", file: decodeURIComponent(parts[1]) };
     return { detail: d };
   }
@@ -749,7 +777,7 @@
   }
   function applyDetail(d) {
     if (d && d.type === "chunk") selectChunk(d.file);
-    else if (d && d.type === "module") selectModule(d.path);
+    else if (d && d.type === "module") selectModule(d.path, d.ctx);
     else if (d && d.type === "bundle") selectBundle(d.file);
     else selectBundle("index.html");
   }
