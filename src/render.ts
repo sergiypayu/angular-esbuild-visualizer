@@ -59,10 +59,6 @@ export async function renderHtml(data: VisualizerData): Promise<string> {
   <span><i class="swatch" style="background:#5a6577"></i> seen ref (expanded elsewhere)</span>
 </div>
 <div class="toolbar">
-  <div class="tabs">
-    <button class="tab active" id="tab-tree">Import tree (from index.html)</button>
-    <button class="tab" id="tab-routes">Dynamic routes</button>
-  </div>
   <input type="search" id="search" placeholder="filter chunks / modules / routes...">
   <button class="link" id="expand-all">expand all</button>
   <button class="link" id="collapse-all">collapse all</button>

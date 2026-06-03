@@ -63,15 +63,17 @@
   var treePane = document.getElementById("tree");
   var search = document.getElementById("search");
   var selectedRow = null;
-  var roots = [DATA.tree];        // current forest (model nodes)
-  var currentView = "tree";       // "tree" | "routes" — which forest is shown
-  var forestCache = { tree: null, routes: null }; // rendered forest DOM, kept alive per view
-  var viewScroll = { tree: 0, routes: 0 };        // last scroll position per view
+  // One unified forest: the eager import tree (rooted at index.html) first, then
+  // each dynamic-route root. index.html holds the initial-load closure; the lazy
+  // route bundles hang off it as the rest of the graph.
+  var FOREST = [DATA.tree].concat(DATA.routes);
+  var forestCache = null;         // rendered forest DOM, kept alive across re-shows
+  var treeScroll = 0;             // last tree scroll (restored when search is cleared)
   var RESTORING = false;          // true while applying history state (suppress pushes)
   var NAV = false;                // true mid-navigation (suppress scroll capture during re-render)
-  // How deep to auto-expand on (re)render: tree view opens index.html only
-  // (its root children visible but collapsed); routes view stays fully collapsed.
-  var autoExpandDepth = 1;
+  // How deep to auto-expand the root being rendered. Set per-root in buildForest:
+  // index.html opens one level (its eager chunks visible); route roots collapsed.
+  var autoExpandDepth = 0;
 
   function badges(node, m) {
     var frag = document.createDocumentFragment();
@@ -145,24 +147,25 @@
     return wrap;
   }
 
-  // Build a view's forest once. The initial collapse (autoExpandDepth) is
-  // applied here, so it happens only at build time — never again on re-show.
-  function buildForest(view) {
-    autoExpandDepth = view === "tree" ? 1 : 0; // tree: open index.html; routes: all collapsed
-    var rts = view === "tree" ? [DATA.tree] : DATA.routes;
+  // Build the unified forest once. The initial collapse (autoExpandDepth) is
+  // applied here, so it happens only at build time — never again on re-show. The
+  // first root (index.html) opens one level; the route roots stay collapsed.
+  function buildForest() {
     var arr = [];
-    rts.forEach(function (r) { arr.push(renderNode(r, 0)); });
+    FOREST.forEach(function (r, i) {
+      autoExpandDepth = i === 0 ? 1 : 0;
+      arr.push(renderNode(r, 0));
+    });
     if (!arr.length) arr.push(el("div", "empty", "Nothing to show."));
     return arr;
   }
-  // Show a view's forest, reusing its cached DOM so expansion state and scroll
-  // survive tab switches and Back/Forward (detached nodes keep their listeners).
-  function showForest(view) {
+  // Show the forest, reusing its cached DOM so expansion state and scroll survive
+  // Back/Forward and search clears (detached nodes keep their listeners).
+  function renderForest() {
     treePane.innerHTML = "";
-    if (!forestCache[view]) forestCache[view] = buildForest(view);
-    forestCache[view].forEach(function (n) { treePane.appendChild(n); });
+    if (!forestCache) forestCache = buildForest();
+    forestCache.forEach(function (n) { treePane.appendChild(n); });
   }
-  function renderForest() { showForest(currentView); }
 
   function expandWrap(wrap) {
     if (!wrap._kids) return;
@@ -182,9 +185,9 @@
 
   // ---- jump from a back-reference (ref/shared badge) to the chunk's --------
   //      canonical, fully-expanded node, revealing it in the tree.
-  // A file has exactly one non-ref node per forest; eager chunks live in the
-  // tree view, lazy chunks in the routes view. Find it, switch view if needed,
-  // expand its ancestors, then select + scroll to it.
+  // A file has exactly one non-ref node in the forest: eager chunks under
+  // index.html, lazy chunks under their route root. Find it, expand its
+  // ancestors, then select + scroll to it.
   function findPath(forestRoots, file) {
     var found = null;
     function dfs(node, trail) {
@@ -209,15 +212,12 @@
     if (wrap._toggle) wrap._toggle.textContent = "▼";
   }
   function revealCanonical(file) {
-    var view = "tree", path = findPath([DATA.tree], file);
-    if (!path) { path = findPath(DATA.routes, file); view = "routes"; }
+    var path = findPath(FOREST, file);
     if (!path) return;
     saveScroll(); // record the outgoing entry's scroll before we scroll the tree
-    // Apply the tab switch + selection as one navigation (single history entry).
     var wasRestoring = RESTORING; RESTORING = true;
-    // The DOM walk below needs the right forest, unfiltered and freshly laid out.
-    if (search.value) { search.value = ""; activate(view); }
-    else if (view !== currentView) activate(view);
+    // The DOM walk below needs the full forest, unfiltered and freshly laid out.
+    if (search.value) { search.value = ""; renderForest(); }
 
     var container = treePane, wrap = null;
     for (var i = 0; i < path.length; i++) {
@@ -260,10 +260,10 @@
   }
   function applySearch(q) {
     q = q.trim().toLowerCase();
-    if (!q) { renderForest(); treePane.scrollTop = viewScroll[currentView] || 0; return; }
+    if (!q) { renderForest(); treePane.scrollTop = treeScroll || 0; return; }
     treePane.innerHTML = "";
     var any = false;
-    roots.forEach(function (r) {
+    FOREST.forEach(function (r) {
       var e = filterRender(r, 0, q);
       if (e) { treePane.appendChild(e); any = true; }
     });
@@ -551,22 +551,7 @@
     pushHistory();
   }
 
-  // ---- tabs / toolbar ---------------------------------------------------
-  var tabTree = document.getElementById("tab-tree");
-  var tabRoutes = document.getElementById("tab-routes");
-  function activate(which) {
-    beginNav();
-    if (currentView !== which) viewScroll[currentView] = treePane.scrollTop; // remember outgoing
-    currentView = which;
-    tabTree.classList.toggle("active", which === "tree");
-    tabRoutes.classList.toggle("active", which === "routes");
-    roots = which === "tree" ? [DATA.tree] : DATA.routes;
-    if (search.value) { applySearch(search.value); }
-    else { showForest(which); treePane.scrollTop = viewScroll[which] || 0; }
-    pushHistory();
-  }
-  tabTree.addEventListener("click", function () { activate("tree"); });
-  tabRoutes.addEventListener("click", function () { activate("routes"); });
+  // ---- toolbar ----------------------------------------------------------
   document.getElementById("expand-all").addEventListener("click", expandAll);
   document.getElementById("collapse-all").addEventListener("click", collapseAll);
   var searchTimer;
@@ -604,32 +589,31 @@
   })();
 
   // ---- history / back-button routing ------------------------------------
-  // State = which forest tab is shown + what the detail pane shows. Each user
-  // navigation (select chunk/module, open eager bundle, switch tab, jump to a
-  // ref) pushes one entry; Back/Forward restore it.
+  // State = what the detail pane shows. Each user navigation (select
+  // chunk/module, open eager bundle, jump to a ref) pushes one entry;
+  // Back/Forward restore it.
   function currentState() {
     var d;
     if (detail._module) d = { type: "module", path: detail._module };
     else if (detail._eager) d = { type: "eager" };
     else if (detail._file) d = { type: "chunk", file: detail._file };
     else d = { type: "none" };
-    return { tab: currentView, detail: d };
+    return { detail: d };
   }
   function hashFor(st) {
-    var frag = st.tab, d = st.detail || { type: "none" };
-    if (d.type === "chunk") frag += "/chunk/" + encodeURIComponent(d.file);
-    else if (d.type === "module") frag += "/module/" + encodeURIComponent(d.path);
-    else if (d.type === "eager") frag += "/eager";
+    var frag = "", d = st.detail || { type: "none" };
+    if (d.type === "chunk") frag = "chunk/" + encodeURIComponent(d.file);
+    else if (d.type === "module") frag = "module/" + encodeURIComponent(d.path);
+    else if (d.type === "eager") frag = "eager";
     return "#" + frag;
   }
   function parseHash(h) {
     if (!h || h.length < 2) return null;
     var parts = h.slice(1).split("/");
-    var tab = parts[0] === "routes" ? "routes" : "tree";
     var d = { type: "eager" };
-    if (parts[1] === "chunk" && parts[2]) d = { type: "chunk", file: decodeURIComponent(parts[2]) };
-    else if (parts[1] === "module" && parts[2]) d = { type: "module", path: decodeURIComponent(parts[2]) };
-    return { tab: tab, detail: d };
+    if (parts[0] === "chunk" && parts[1]) d = { type: "chunk", file: decodeURIComponent(parts[1]) };
+    else if (parts[0] === "module" && parts[1]) d = { type: "module", path: decodeURIComponent(parts[1]) };
+    return { detail: d };
   }
   var lastHash = null;
   // pushState with a URL throws on file:// (origin "null"); fall back to a
@@ -658,7 +642,11 @@
   var scrollRaf = 0;
   function onPaneScroll() {
     if (scrollRaf) return;
-    scrollRaf = requestAnimationFrame(function () { scrollRaf = 0; saveScroll(); });
+    scrollRaf = requestAnimationFrame(function () {
+      scrollRaf = 0;
+      if (!search.value && !NAV && !RESTORING) treeScroll = treePane.scrollTop;
+      saveScroll();
+    });
   }
   treePane.addEventListener("scroll", onPaneScroll, { passive: true });
   detail.addEventListener("scroll", onPaneScroll, { passive: true });
@@ -676,22 +664,23 @@
     else if (d && d.type === "module") selectModule(d.path);
     else selectEagerBundle();
   }
-  function applyState(st, forceForest) {
+  function applyState(st) {
     RESTORING = true;
-    if (forceForest || st.tab !== currentView) activate(st.tab);
     applyDetail(st.detail);
     RESTORING = false;
   }
   window.addEventListener("popstate", function (ev) {
-    var st = ev.state || parseHash(location.hash) || { tab: "tree", detail: { type: "eager" } };
+    var st = ev.state || parseHash(location.hash) || { detail: { type: "eager" } };
     applyState(st);
     lastHash = hashFor(st);
     restoreScroll(st);
     requestAnimationFrame(function () { restoreScroll(st); }); // again once layout settles
   });
 
-  // Initial view: honor a deep-link hash, else default to the eager bundle.
-  applyState(parseHash(location.hash) || { tab: "tree", detail: { type: "eager" } }, true);
+  // Initial render: lay out the forest, then honor a deep-link hash (default: the
+  // eager bundle breakdown).
+  renderForest();
+  applyState(parseHash(location.hash) || { detail: { type: "eager" } });
   var initState = currentState(); initState.scroll = scrollNow();
   setHistory(initState, true);
 })();

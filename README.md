@@ -112,14 +112,17 @@ angular-esbuild-visualizer dist/my-app/browser \
 ## The output
 
 A single HTML page: a navigable tree on the left and a detail/inspector pane on
-the right (drag the divider to resize). The tree has two views:
+the right (drag the divider to resize). The tree is one unified import graph,
+ordered the way the app loads:
 
-- **Import tree (from `index.html`)** — the eager initial-load graph. The
-  synthetic `index.html` root → entry scripts → their transitive static
-  imports. This is everything the browser downloads before the app boots.
-- **Dynamic routes** — a forest of `import()`-triggered bundles. Each root is
-  best-effort labelled with its Angular route `path` (e.g. `/blog`), and its
-  subtree shows the chunk's static closure and any nested lazy routes.
+- The synthetic **`index.html`** root → entry scripts → their transitive static
+  imports — everything the browser downloads before the app boots. This first
+  node is expanded by default.
+- Then each **dynamic route** hangs off it: a forest of `import()`-triggered
+  bundles. Each root is best-effort labelled with its Angular route `path`
+  (e.g. `/blog`), and its subtree shows the lazy chunk's own static closure
+  (chunks already paid for eagerly marked as shared references) and any nested
+  lazy routes.
 
 ### Analyzing size
 
@@ -147,11 +150,10 @@ the right (drag the divider to resize). The tree has two views:
   labels, entry points) — including not-yet-expanded nodes — and keeps the
   ancestor path of every match.
 - **Jump to definition** — clicking a `ref` / `shared` back-reference badge
-  reveals and scrolls to the chunk's canonical, fully-expanded node (switching
-  view if needed).
-- **Back / Forward** — every navigation (chunk, module, eager bundle, tab, ref
-  jump) is a browser history entry, and the current view is deep-linkable via
-  the URL hash.
+  reveals and scrolls to the chunk's canonical, fully-expanded node.
+- **Back / Forward** — every navigation (chunk, module, eager bundle, ref jump)
+  is a browser history entry, and the current view is deep-linkable via the URL
+  hash.
 - **Badges**: `entry` (referenced by a `<script>`), `preload`
   (`<link rel=modulepreload>`), `eager`, `lazy`, and `shared` / `ref` (clickable)
   for back-references that keep the DAG rendered as a tree.

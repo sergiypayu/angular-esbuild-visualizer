@@ -57,12 +57,6 @@ header .gen { color: var(--fg-dim); font-size: 12px; }
   display: flex; align-items: center; gap: 10px;
   padding: 8px 18px; border-bottom: 1px solid var(--border); background: var(--bg);
 }
-.tabs { display: flex; gap: 4px; }
-.tab {
-  background: transparent; color: var(--fg-dim); border: 1px solid transparent;
-  padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 13px;
-}
-.tab.active { color: var(--fg); background: var(--bg-row); border-color: var(--border); }
 .toolbar input[type="search"] {
   background: var(--bg-row); border: 1px solid var(--border); color: var(--fg);
   padding: 5px 10px; border-radius: 6px; min-width: 240px; font-size: 13px;
