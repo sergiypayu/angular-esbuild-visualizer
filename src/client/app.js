@@ -436,6 +436,27 @@
     var m = meta(file);
     var sub = fmtBytes(m.bytes) + " · " + m.moduleCount + " module" + (m.moduleCount === 1 ? "" : "s")
       + (m.entryPoint ? " · entry: " + m.entryPoint : "") + (m.inEager ? " · eager" : " · lazy");
+    if (m.moduleCount === 0) {
+      // A re-export entry chunk: esbuild emits one when a module is both
+      // statically used and dynamically import()ed. It has no source modules of
+      // its own — its code lives in the chunks it pulls in, so the bundle (the
+      // whole load) is the useful view.
+      detail.innerHTML = "";
+      detail.appendChild(el("h2", null, m.file));
+      detail.appendChild(el("div", "sub", sub));
+      var note = el("div", "why-status");
+      note.appendChild(document.createTextNode(
+        "No source modules of its own — a re-export entry chunk (esbuild emits one when a module is both " +
+        "statically used and dynamically import()ed). Its code lives in the chunks it pulls in. "));
+      var link = el("a", "act-link", "View its full bundle →");
+      link.href = "#";
+      link.addEventListener("click", function (ev) { ev.preventDefault(); selectBundle(file); });
+      note.appendChild(link);
+      detail.appendChild(note);
+      detail._file = file;
+      pushHistory();
+      return;
+    }
     renderTreemapDetail(m.file, sub, m.contents);
     detail._file = file;
     pushHistory();

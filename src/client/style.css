@@ -150,6 +150,8 @@ table.mods tr.mrow:hover td { background: var(--bg-row-hover); color: var(--fg);
   margin: 10px 0; padding: 8px 10px; border-radius: 6px; font-size: 12px;
   border-left: 3px solid var(--fg-dim); background: var(--bg-soft);
 }
+.why-status a.act-link { color: var(--accent); cursor: pointer; white-space: nowrap; }
+.why-status a.act-link:hover { text-decoration: underline; }
 .why-status.eager { border-left-color: var(--lazy); }      /* the actionable case */
 .why-status.grouped { border-left-color: var(--shared); }
 .why-status.lazy { border-left-color: var(--eager); }
