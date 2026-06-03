@@ -187,9 +187,12 @@ ordered the way the app loads:
    marking already-eager chunks as `shared-eager` refs and previously-expanded
    lazy chunks as `seen` refs. A chunk that is itself a top-level route stays
    canonical at its own root — incidental cross-route imports of it become refs.
-5. Route paths are recovered best-effort by scanning the importer's source for
-   the `path: "…"` nearest each `import("./chunk")` — works on unminified
-   bundles, silently skipped otherwise.
+5. Route labels are recovered best-effort by scanning the importer's source for
+   the route-object key nearest each `import("./chunk")`: an explicit
+   `path: "…"` → `/…`, or a `matcher:` (a custom `UrlMatcher`, whose url is
+   decided at runtime and can't be read statically) → a generic `(matcher)`. The
+   `path`/`matcher` keys survive minification, so this works on prod bundles;
+   it's silently skipped when neither sits beside the import.
 6. `buildModuleGraph` embeds a compact reverse import graph of the *original*
    modules (interned paths, packed edges, plus the entry-module indices). The
    client walks it to answer **“why is this module loaded?”** — the shortest
@@ -200,9 +203,10 @@ dependency-free client (`src/client/`).
 
 ## Limitations
 
-- **Route-path labels** rely on readable (unminified) source near the
-  `import()` call. With aggressive minification the lazy chunks still appear,
-  just without a `/path` label.
+- **Route-path labels** are read from the `path:` / `matcher:` key beside each
+  `import()`. A `matcher:` route shows a generic `(matcher)` (its url is computed
+  at runtime); and when the route config lives in a different chunk than the
+  import, the lazy chunk still appears, just without a label.
 - Only the **JS import graph** is analyzed; CSS bundles and assets are out of
   scope.
 - Sizes are esbuild's `bytes` / `bytesInOutput` (pre-gzip).

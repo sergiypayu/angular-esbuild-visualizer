@@ -215,9 +215,17 @@ function escapeRe(s: string): string {
 }
 
 /**
- * Best-effort: find the Angular route `path` that triggers `import("./target")`
- * inside `importer`'s source. Returns e.g. `/blog`, `/` (empty path), or undefined.
- * Works on unminified (dev) bundles; silently gives up otherwise.
+ * Best-effort: find the Angular route label that triggers `import("./target")`
+ * inside `importer`'s source. Returns e.g. `/blog`, `/` (empty path),
+ * `(matcher)` for a custom-`UrlMatcher` route, or undefined.
+ *
+ * Reads the route-object key sitting just before the route's load import:
+ *   - `path: "blog"`        → `/blog`
+ *   - `matcher: <anything>` → `(matcher)` — a custom `UrlMatcher` is an arbitrary
+ *     function that decides the path at runtime, so it can't be read statically;
+ *     we only flag that the route exists rather than guess at its url.
+ * The nearest such key before the import wins. `path`/`matcher` are Angular
+ * Route API names, preserved through minification, so this works on prod bundles.
  */
 async function routePathFor(
   importer: string,
@@ -227,17 +235,16 @@ async function routePathFor(
   const text = await sources.read(importer);
   if (!text) return undefined;
   const impRe = new RegExp(`import\\(\\s*["'\`]\\./${escapeRe(target)}["'\`]`, "g");
-  const pathRe = /path\s*:\s*["'`]([^"'`]*)["'`]/g;
+  // Group 1: the value of an explicit `path:"…"`. The bare `matcher:` alternative
+  // has no group, so a match with `last[1] === undefined` is a matcher route.
+  const keyRe = /path\s*:\s*["'`]([^"'`]*)["'`]|matcher\s*:/g;
   for (let m = impRe.exec(text); m !== null; m = impRe.exec(text)) {
     const windowStart = Math.max(0, m.index - 600);
     const before = text.slice(windowStart, m.index);
     let last: RegExpExecArray | null = null;
-    for (let pm = pathRe.exec(before); pm !== null; pm = pathRe.exec(before)) last = pm;
-    pathRe.lastIndex = 0;
-    if (last) {
-      const seg = last[1]!;
-      return "/" + seg.replace(/^\/+/, "");
-    }
+    for (let pm = keyRe.exec(before); pm !== null; pm = keyRe.exec(before)) last = pm;
+    keyRe.lastIndex = 0;
+    if (last) return last[1] !== undefined ? "/" + last[1].replace(/^\/+/, "") : "(matcher)";
   }
   return undefined;
 }

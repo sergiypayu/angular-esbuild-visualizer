@@ -61,9 +61,11 @@ the result via the OS default handler, like esbuild-visualizer). The pipeline
      root; each lazy subtree expands its own static closure, marking
      already-eager chunks as `shared-eager` refs and re-seen lazy chunks as
      `seen` refs (`buildRouteForest`). Refs keep the DAG renderable as a tree.
-   - Recovers route `path` labels best-effort by scanning the importer's source
-     near each `import("./chunk")` (`routePathFor` + `SourceCache`) — works on
-     unminified bundles, silently skipped otherwise.
+   - Recovers route labels best-effort by scanning the importer's source for the
+     route key nearest each `import("./chunk")` (`routePathFor` + `SourceCache`):
+     an explicit `path:"…"` → `/…`, or any `matcher:` → a generic `(matcher)`
+     (custom UrlMatcher, url not statically known). Survives minification;
+     silently skipped when no key sits beside the import.
    - Builds each chunk's contents hierarchy for the treemap (`buildContents`).
 4. **`src/render.ts`** — `renderHtml()` inlines `src/client/style.css` +
    `src/client/app.js` and the serialized model into one HTML document.
