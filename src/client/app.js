@@ -187,9 +187,14 @@
   // applied here, so it happens only at build time — never again on re-show. The
   // first root (index.html) opens one level; the route roots stay collapsed.
   function buildForest() {
-    var arr = [];
+    var arr = [], dividerDone = false;
     FOREST.forEach(function (r, i) {
       autoExpandDepth = i === 0 ? 1 : 0;
+      // Group the shared/no-owner roots below the real routes under a divider.
+      if (r.shared && !dividerDone) {
+        dividerDone = true;
+        arr.push(el("div", "forest-divider", "Shared lazy chunks · no single route owner"));
+      }
       arr.push(renderNode(r, 0));
     });
     if (!arr.length) arr.push(el("div", "empty", "Nothing to show."));

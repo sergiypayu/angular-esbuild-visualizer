@@ -57,10 +57,15 @@ the result via the OS default handler, like esbuild-visualizer). The pipeline
 3. **`src/graph.ts`** — `buildModel()` is the core. It:
    - BFS from the HTML entries over **static** edges → the **eager set** and the
      import tree (`buildEagerTree`).
-   - Treats every **dynamic-import** edge firing from the eager app as a route
-     root; each lazy subtree expands its own static closure, marking
-     already-eager chunks as `shared-eager` refs and re-seen lazy chunks as
-     `seen` refs (`buildRouteForest`). Refs keep the DAG renderable as a tree.
+   - Builds the dynamic-route forest (`buildRouteForest`): each lazy chunk is
+     expanded once and ref'd elsewhere. Its owner is the `import()` caller whose
+     directory *contains* the chunk's entry module, deepest wins
+     (`ownersByProximity`). It nests under the owner **only if** the owner is a
+     canonical lazy route (a stable home); an eager- or shared-chunk-owner (no
+     single home) or no owner → top-level root, ref'd by each triggering bundle.
+     An eager `import()` of a nested chunk also shows as a top-level ref. Each
+     subtree expands its static closure (already-eager → `shared-eager` refs);
+     every non-owner `import()` → a `seen` ref. Refs keep the DAG a tree.
    - Recovers route labels best-effort by scanning the importer's source for the
      route key nearest each `import("./chunk")` (`routePathFor` + `SourceCache`):
      an explicit `path:"…"` → `/…`, or any `matcher:` → a generic `(matcher)`

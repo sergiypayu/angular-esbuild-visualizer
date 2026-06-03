@@ -182,11 +182,16 @@ ordered the way the app loads:
 3. `buildEagerTree` seeds both the `<script>` entries and the `modulepreload`
    hints as top-level roots, then BFSes over `import-statement` (static) edges →
    the **eager set** and the import tree.
-4. `buildRouteForest` collects every `dynamic-import` edge that fires from the
-   eager app as a route root; each lazy subtree expands its own static closure,
-   marking already-eager chunks as `shared-eager` refs and previously-expanded
-   lazy chunks as `seen` refs. A chunk that is itself a top-level route stays
-   canonical at its own root — incidental cross-route imports of it become refs.
+4. `buildRouteForest` expands each lazy chunk **once** and refs it everywhere
+   else. Its owner is the `import()` caller whose folder *contains* the chunk's
+   entry module (deepest container wins; ties or unrelated callers → no owner).
+   It only **nests** under that owner when the owner is itself a canonical lazy
+   route (a single stable home); if the owner is eager or a shared non-route
+   chunk (pulled into many bundles, so no single home), or there's no owner, the
+   chunk goes to the **top level** and each triggering bundle refs it. An eager
+   `import()` of a nested chunk also shows as a top-level ref into its route. Each
+   subtree expands its static closure (already-eager → `shared-eager` refs), and
+   every other `import()` of a chunk → a `seen` ref, keeping the DAG a tree.
 5. Route labels are recovered best-effort by scanning the importer's source for
    the route-object key nearest each `import("./chunk")`: an explicit
    `path: "…"` → `/…`, or a `matcher:` (a custom `UrlMatcher`, whose url is

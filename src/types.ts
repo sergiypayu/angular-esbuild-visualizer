@@ -81,6 +81,9 @@ export interface TreeNode {
   ref?: boolean;
   /** For ref nodes: why it's a ref. */
   refReason?: "seen" | "shared-eager";
+  /** Top-level root with no single route owner (a shared lazy chunk); the client
+   * groups these below the real routes under a divider. */
+  shared?: boolean;
   children: TreeNode[];
 }
 

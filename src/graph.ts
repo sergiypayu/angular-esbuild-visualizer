@@ -250,55 +250,134 @@ async function routePathFor(
 }
 
 /**
- * Build the dynamic-route forest. Every `import()` reachable from the eager app
- * becomes a route root; its subtree shows the lazy chunk's own static closure
- * (chunks already loaded eagerly are shown as shared-refs) plus nested routes.
+ * Pick the canonical owner of each lazy chunk by **directory containment**.
+ * Among a chunk's module-level `import()` callers, the owner is the one whose
+ * source directory *contains* the chunk's entry module (is an ancestor dir),
+ * choosing the deepest such container. e.g. `…/promo/index/index-routing.ts`
+ * owns `…/promo/index/components/index.component` (its folder contains it), while
+ * an incidental `…/shared/services/auth.service.ts` redirect does not — and a
+ * *sibling* like `…/modules/events/…` never owns `…/modules/events-calendar/…`.
+ *
+ * With no container, a sole caller still owns it; otherwise (a tie between
+ * containers, or several unrelated callers) the chunk is hoisted to a top-level
+ * shared root with every caller referencing it.
+ *
+ * Returns chunk → owner chunk (or `null` to hoist). Only `import()` targets are
+ * present.
+ */
+function ownersByProximity(
+  meta: EsbuildMetafile,
+  jsOutputs: Map<string, EsbuildOutput>,
+  lazyChunks: Set<string>,
+): Map<string, string | null> {
+  const modChunk = new Map<string, string>(); // module path → containing chunk
+  const chunkEntry = new Map<string, string>(); // chunk → its entry module
+  for (const [file, out] of jsOutputs) {
+    for (const m of Object.keys(out.inputs ?? {})) if (!modChunk.has(m)) modChunk.set(m, file);
+    if (out.entryPoint) chunkEntry.set(file, out.entryPoint);
+  }
+  const dynImporters = new Map<string, string[]>(); // entry module → modules that import() it
+  for (const [mod, input] of Object.entries(meta.inputs)) {
+    for (const imp of input.imports ?? []) {
+      if (imp.kind !== "dynamic-import") continue;
+      const arr = dynImporters.get(imp.path);
+      if (arr) arr.push(mod);
+      else dynImporters.set(imp.path, [mod]);
+    }
+  }
+  const dirOf = (p: string): string[] => { const s = p.split("/"); s.pop(); return s; };
+  // a's directory is an ancestor of (or equal to) b's: a's segments prefix b's.
+  const contains = (a: string[], b: string[]): boolean =>
+    a.length <= b.length && a.every((seg, i) => seg === b[i]);
+
+  const ownerOf = new Map<string, string | null>();
+  for (const x of lazyChunks) {
+    const ex = chunkEntry.get(x);
+    let owner: string | null = null;
+    if (ex !== undefined) {
+      const exDir = dirOf(ex);
+      let bestDepth = -1;
+      const bestChunks = new Set<string>(); // deepest containing-dir callers
+      const allChunks = new Set<string>(); // every resolvable caller (fallback)
+      for (const m of dynImporters.get(ex) ?? []) {
+        const c = modChunk.get(m);
+        if (c === undefined || c === x) continue; // unresolved / self
+        allChunks.add(c);
+        const mDir = dirOf(m);
+        if (!contains(mDir, exDir)) continue; // must contain the chunk's dir
+        if (mDir.length > bestDepth) { bestDepth = mDir.length; bestChunks.clear(); bestChunks.add(c); }
+        else if (mDir.length === bestDepth) bestChunks.add(c);
+      }
+      if (bestChunks.size === 1) owner = bestChunks.values().next().value!;
+      else if (bestChunks.size === 0 && allChunks.size === 1) owner = allChunks.values().next().value!;
+    }
+    ownerOf.set(x, owner);
+  }
+  return ownerOf;
+}
+
+/**
+ * Build the dynamic-route forest. Each lazy chunk is expanded **once** and
+ * referenced everywhere else. It nests under its owner only when that owner is a
+ * canonical lazy route (a single stable home, see {@link ownersByProximity});
+ * if the owner is eager or a shared (non-route) chunk — which has no single home
+ * — the chunk goes to the top level and each triggering bundle refs it. An eager
+ * `import()` of a nested chunk also surfaces as a top-level ref into its route.
  */
 async function buildRouteForest(
+  meta: EsbuildMetafile,
   eager: Set<string>,
   jsOutputs: Map<string, EsbuildOutput>,
   sources: SourceCache,
 ): Promise<TreeNode[]> {
-  // All dynamic edges, grouped by importer.
+  // Chunk-level dynamic edges, grouped by importer, plus the inverse.
   const dynamic = new Map<string, string[]>();
+  const importersOf = new Map<string, string[]>(); // target chunk → importer chunks
   for (const [file, out] of jsOutputs) {
     const targets = dynamicImports(out).filter((t) => jsOutputs.has(t));
     if (targets.length) dynamic.set(file, targets);
+    for (const t of targets) {
+      const arr = importersOf.get(t);
+      if (arr) arr.push(file);
+      else importersOf.set(t, [file]);
+    }
   }
 
-  // Chunks dynamically imported straight from the eager app — i.e. top-level
-  // routes. Such a chunk's canonical expansion belongs at its own route root,
-  // so when one is reached *nested* under another route (e.g. an incidental
-  // cross-route `import()`), we emit a ref and let the root pass expand it.
-  const rootTargets = new Set<string>();
-  for (const [importer, targets] of dynamic) {
-    if (!eager.has(importer)) continue;
-    for (const target of targets) rootTargets.add(target);
-  }
+  const lazyChunks = new Set<string>(importersOf.keys());
+  const ownerOf = ownersByProximity(meta, jsOutputs, lazyChunks);
+  // The chunk a lazy chunk nests *under*, or null if it belongs at the top level.
+  // We only nest under an owner that is itself a canonical lazy route — that's a
+  // single, stable home. An owner that is eager or a shared (non-route) chunk has
+  // no single home (it's pulled into many bundles), so the chunk goes top-level
+  // and each triggering bundle refs it, rather than landing under an arbitrary one.
+  const homeOf = (x: string): string | null => {
+    const o = ownerOf.get(x);
+    return o != null && lazyChunks.has(o) && !eager.has(o) ? o : null;
+  };
+  const isTopLevel = (x: string): boolean => homeOf(x) === null;
 
-  const expanded = new Set<string>(); // lazy chunks whose subtree was already emitted
-
-  const buildLazySubtree = async (
+  const expanded = new Set<string>(); // lazy chunks already expanded canonically
+  const refNode = (
     file: string,
-    importer: string,
-    isRoot: boolean,
-  ): Promise<TreeNode> => {
-    const routePath = await routePathFor(importer, file, sources);
+    edge: "static" | "dynamic",
+    reason: "seen" | "shared-eager",
+    routePath?: string,
+  ): TreeNode => ({
+    file, kind: "ref", edge, ref: true, refReason: reason, children: [],
+    ...(routePath !== undefined ? { routePath } : {}),
+  });
+
+  // Expand a lazy chunk canonically: its node, its new static closure, and its
+  // nested dynamic routes (canonical when owned by the importing chunk, else ref).
+  const expandLazy = async (file: string, pathSource: string | undefined): Promise<TreeNode> => {
+    const routePath = pathSource !== undefined ? await routePathFor(pathSource, file, sources) : undefined;
     const node: TreeNode = {
-      file,
-      kind: "lazy",
-      edge: "dynamic",
-      children: [],
+      file, kind: "lazy", edge: "dynamic", children: [],
       ...(routePath !== undefined ? { routePath } : {}),
     };
-    if (expanded.has(file) || (!isRoot && rootTargets.has(file))) {
-      node.ref = true;
-      node.refReason = "seen";
-      return node;
-    }
+    if (expanded.has(file)) { node.ref = true; node.refReason = "seen"; return node; }
     expanded.add(file);
 
-    // Static closure that is *new* for this lazy bundle.
     const localOwner = new Set<string>([file]);
     const localQueue: string[] = [file];
     const localNode = new Map<string, TreeNode>([[file, node]]);
@@ -309,28 +388,8 @@ async function buildRouteForest(
       if (!out) continue;
       for (const target of staticImports(out)) {
         if (!jsOutputs.has(target)) continue;
-        if (eager.has(target)) {
-          parent.children.push({
-            file: target,
-            kind: "ref",
-            edge: "static",
-            ref: true,
-            refReason: "shared-eager",
-            children: [],
-          });
-          continue;
-        }
-        if (localOwner.has(target)) {
-          parent.children.push({
-            file: target,
-            kind: "ref",
-            edge: "static",
-            ref: true,
-            refReason: "seen",
-            children: [],
-          });
-          continue;
-        }
+        if (eager.has(target)) { parent.children.push(refNode(target, "static", "shared-eager")); continue; }
+        if (localOwner.has(target)) { parent.children.push(refNode(target, "static", "seen")); continue; }
         const child: TreeNode = { file: target, kind: "eager", edge: "static", children: [] };
         parent.children.push(child);
         localOwner.add(target);
@@ -339,25 +398,58 @@ async function buildRouteForest(
       }
     }
 
-    // Nested dynamic routes from this bundle and everything statically pulled with it.
     for (const owned of localOwner) {
       for (const target of dynamic.get(owned) ?? []) {
-        node.children.push(await buildLazySubtree(target, owned, false));
+        if (homeOf(target) === owned) node.children.push(await expandLazy(target, owned));
+        else node.children.push(refNode(target, "dynamic", "seen", await routePathFor(owned, target, sources)));
       }
     }
     return node;
   };
 
-  // Roots: dynamic imports that fire from the eager (already-booted) app.
   const roots: TreeNode[] = [];
+
+  // Canonical top-level roots: every chunk without a lazy-route home (eager-,
+  // shared-, or hoisted-owner). The label is read from the owner's source (the
+  // routing file that defines it), falling back to any importer otherwise. A
+  // root not owned by the eager app has no single route owner → mark it `shared`
+  // so the client groups it below the real routes.
+  for (const x of lazyChunks) {
+    if (!isTopLevel(x)) continue;
+    const o = ownerOf.get(x);
+    const node = await expandLazy(x, o ?? importersOf.get(x)?.[0]);
+    if (!(o != null && eager.has(o))) node.shared = true;
+    roots.push(node);
+  }
+
+  // Top-level refs: an eager chunk `import()`s a chunk that a lazy route owns —
+  // surface that trigger here, jumping into the route where it's expanded.
+  const refDone = new Set<string>();
   for (const [importer, targets] of dynamic) {
     if (!eager.has(importer)) continue;
     for (const target of targets) {
-      roots.push(await buildLazySubtree(target, importer, true));
+      if (isTopLevel(target) || refDone.has(target)) continue;
+      refDone.add(target);
+      roots.push(refNode(target, "dynamic", "seen", await routePathFor(importer, target, sources)));
     }
   }
-  roots.sort((a, b) => (a.routePath ?? "~").localeCompare(b.routePath ?? "~"));
-  return roots;
+
+  // Safety net for `import()` cycles: a chunk whose owner-chain never reaches a
+  // top-level root. Hoist any still-unexpanded lazy chunk so nothing is lost.
+  for (const x of lazyChunks) {
+    if (!expanded.has(x)) {
+      const node = await expandLazy(x, importersOf.get(x)?.[0]);
+      node.shared = true;
+      roots.push(node);
+    }
+  }
+
+  // Real routes first (by path), then the shared/no-owner chunks (by size).
+  const routeRoots = roots.filter((r) => !r.shared)
+    .sort((a, b) => (a.routePath ?? "~").localeCompare(b.routePath ?? "~"));
+  const sharedRoots = roots.filter((r) => r.shared)
+    .sort((a, b) => (jsOutputs.get(b.file)?.bytes ?? 0) - (jsOutputs.get(a.file)?.bytes ?? 0));
+  return routeRoots.concat(sharedRoots);
 }
 
 export async function buildModel(
@@ -387,7 +479,7 @@ export async function buildModel(
   }
 
   const sources = new SourceCache(opts.dir);
-  const routes = await buildRouteForest(eager, jsOutputs, sources);
+  const routes = await buildRouteForest(meta, eager, jsOutputs, sources);
 
   // Summary.
   let totalJsBytes = 0;
