@@ -1,6 +1,6 @@
 {
   "name": "angular-esbuild-visualizer",
-  "version": "0.1.0",
+  "version": "0.5.0",
   "description": "Visualize the import branch of an Angular (esbuild builder) production bundle, starting from index.html. Builds an interactive HTML tree of chunk-to-chunk imports (eager + dynamic routes) and per-chunk original-module contents, using the build's stats.json (esbuild metafile).",
   "type": "module",
   "keywords": [
