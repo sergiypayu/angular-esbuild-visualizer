@@ -60,8 +60,11 @@ function buildModuleGraph(
 
 export interface BuildOptions {
   title: string;
-  /** Bundle directory (used to read chunk sources for best-effort route paths). */
+  /** Analyzed bundle directory (its basename becomes the friendly `source` label). */
   dir: string;
+  /** Directory holding the emitted chunks (where index.html lives); used to read
+   * chunk sources for best-effort route paths. Defaults to `dir`. */
+  chunkDir?: string;
   /** Max original-module names shown in a chunk's `[...]` label. */
   topModules: number;
 }
@@ -478,7 +481,7 @@ export async function buildModel(
     if (c) c.inEager = true;
   }
 
-  const sources = new SourceCache(opts.dir);
+  const sources = new SourceCache(opts.chunkDir ?? opts.dir);
   const routes = await buildRouteForest(meta, eager, jsOutputs, sources);
 
   // Summary.

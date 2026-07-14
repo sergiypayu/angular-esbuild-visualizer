@@ -19,6 +19,8 @@ graph the way the browser actually loads it:
 
 It produces a single self-contained HTML file (no runtime dependencies, no
 server) from the build's `stats.json` (the esbuild **metafile**) and `index.html`.
+With [`--json`](#machine-readable-output---json) it instead prints the same
+analysis as a machine-readable JSON report to stdout — for AI agents and scripts.
 
 ## Why
 
@@ -67,8 +69,10 @@ Enable `statsJson` for the build target in `angular.json`:
 ng build --stats-json
 ```
 
-This writes `stats.json` (the esbuild metafile) into the build output directory,
-alongside `index.html` and the emitted chunks.
+This writes `stats.json` (the esbuild metafile) to the build **output root**
+(e.g. `dist/my-app/`), while `index.html` and the emitted chunks land in its
+`browser/` subdirectory. (In an SSR build the metafile also covers the server
+bundles; those are `.mjs` files and are ignored by the analysis.)
 
 ## Usage
 
@@ -84,8 +88,11 @@ node --experimental-strip-types src/cli.ts <dir> [options]
 npx angular-esbuild-visualizer <dir> [options]
 ```
 
-`<dir>` is the build output directory containing both `stats.json` and
-`index.html`. It defaults to the current directory.
+`<dir>` is the Angular build output directory — either the **output root**
+(where `stats.json` lives, with `index.html` under `browser/`) or the
+**`browser/` subdirectory** itself; the other half is found automatically
+(`stats.json` is also looked up one level above `<dir>`, `index.html` also in
+`<dir>/browser/`). It defaults to the current directory.
 
 ### Example
 
@@ -100,14 +107,46 @@ angular-esbuild-visualizer dist/my-app/browser \
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `<dir>` | `cwd` | Build output dir (contains `stats.json` + `index.html`). |
-| `--stats <path>` | `<dir>/stats.json` | Path to the esbuild metafile. |
-| `--html <path>` | `<dir>/index.html` | Path to `index.html`. |
+| `<dir>` | `cwd` | Build output root or its `browser/` subdir. |
+| `--stats <path>` | `<dir>/stats.json`, else `<dir>/../stats.json` | Path to the esbuild metafile. |
+| `--html <path>` | `<dir>/index.html`, else `<dir>/browser/index.html` | Path to `index.html`. |
 | `-o, --filename <path>` | `./angular-deps.html` | Output HTML file. |
 | `--title <text>` | `Angular Import Visualizer` | Document title. |
 | `--top <n>` | `3` | Module names shown in each chunk's `[…]` label. |
 | `--open` | off | Open the result in the default browser. |
+| `--json` | off | Print a machine-readable JSON report to stdout; skips the HTML file unless `-o` is also given. |
 | `-h, --help` | | Show help. |
+
+### Machine-readable output (`--json`)
+
+For AI agents and scripts, `--json` prints a self-describing JSON report to
+**stdout** instead of writing the HTML file (all progress messages go to
+stderr, so the output pipes cleanly):
+
+```bash
+angular-esbuild-visualizer dist/my-app/browser --json > deps.json
+# or straight into jq
+angular-esbuild-visualizer dist/my-app/browser --json | jq '.summary'
+```
+
+Pass `-o` together with `--json` to also write the HTML file.
+
+The report contains:
+
+- `summary` — total / eager / lazy JS bytes, chunk and import-edge counts.
+- `initial` — the eager import tree rooted at `index.html`, annotated with
+  per-chunk sizes: everything the browser downloads before the app boots.
+- `routes` — the lazy-route forest. Each route carries its best-effort
+  `routePath`, `downloadBytes` + `chunks` (the route's own static closure —
+  what navigating there fetches), `sharedEagerBytes` / `sharedEagerChunks`
+  (deps already in the initial bundle, free at navigation), and nested
+  `routes`. Entries with `ref: true` point at a route expanded under another
+  root; `shared: true` marks a lazy chunk with no single owning route.
+- `chunks` — per-chunk metadata: size, entry point, eager / entry / preload
+  flags, chunk-level `staticImports` / `dynamicImports` edges for walking the
+  graph, and the original source `modules` inside it, largest first.
+- `notes` — a short embedded legend explaining these semantics (ref nodes,
+  shared routes, byte accounting), so a consumer needs no external docs.
 
 ## The output
 

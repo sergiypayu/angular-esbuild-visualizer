@@ -8,7 +8,8 @@ A single-purpose CLI that turns an Angular **esbuild-builder** production build
 into a self-contained HTML import-graph visualizer. Input: the build's
 `stats.json` (esbuild **metafile**) + `index.html`. Output: one HTML file (no
 runtime deps, no server) with an eager import tree, a dynamic-route forest, and a
-per-chunk original-module treemap.
+per-chunk original-module treemap — or, with `--json`, a machine-readable report
+on stdout (for AI agents / scripts; skips the HTML unless `-o` is also given).
 
 See `README.md` for the user-facing docs (options, how to produce `stats.json`).
 
@@ -74,7 +75,13 @@ the result via the OS default handler, like esbuild-visualizer). The pipeline
    - Builds each chunk's contents hierarchy for the treemap (`buildContents`).
 4. **`src/render.ts`** — `renderHtml()` inlines `src/client/style.css` +
    `src/client/app.js` and the serialized model into one HTML document.
-5. **`src/client/app.js`** — the in-page app: tree rendering (lazy-populated on
+5. **`src/agent-report.ts`** — `buildAgentReport()` reshapes the model (+ the
+   metafile) into the `--json` stdout report: size-annotated trees,
+   pre-aggregated per-route download costs (mirroring the client's
+   `collectBundle` semantics), per-chunk module lists and chunk-level import
+   edges, plus an embedded `notes` legend. Its types live in the module itself,
+   not `types.ts` (it's a CLI output format, not the client model).
+6. **`src/client/app.js`** — the in-page app: tree rendering (lazy-populated on
    expand), search over the full model, and the squarified treemap + module
    table in the detail pane.
 
@@ -83,6 +90,16 @@ the result via the OS default handler, like esbuild-visualizer). The pipeline
 changing the model.
 
 ## Conventions & gotchas
+
+- **Input layout**: the Angular application builder writes `stats.json` at the
+  output *root* but `index.html` + chunks under `browser/`. The CLI accepts
+  either directory as `<dir>`: `stats.json` is looked up at `<dir>/stats.json`
+  then `<dir>/../stats.json`; `index.html` at `<dir>/index.html` then
+  `<dir>/browser/index.html`. Route-label sources are read from
+  `dirname(index.html)` (`BuildOptions.chunkDir`), where the chunks live. In an
+  SSR build the metafile merges browser *and* server outputs — server bundles
+  are `.mjs`, filtered out by `isJs`; metafile output keys carry no `browser/`
+  prefix (they're raw esbuild paths, relative to the workspace root).
 
 - **`src/client/app.js` is hand-written dependency-free browser JS** in a
   conservative style (`var`, IIFE, no modules) so it runs inline in any output.
